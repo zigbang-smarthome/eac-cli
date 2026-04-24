@@ -1,0 +1,31 @@
+{
+  "name": "@zigbang-smarthome/eac-cli",
+  "description": "CLI for eac.zigbang.in (E-Accounting / UniDocu)",
+  "module": "src/index.ts",
+  "type": "module",
+  "bin": {
+    "eac": "bin/eac.mjs"
+  },
+  "files": [
+    "bin"
+  ],
+  "scripts": {
+    "postinstall": "node bin/install.js",
+    "dev": "bun run src/index.ts",
+    "build": "bun build --compile --outfile=dist/eac src/index.ts"
+  },
+  "dependencies": {
+    "citty": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zigbang-smarthome/eac-cli"
+  }
+}
