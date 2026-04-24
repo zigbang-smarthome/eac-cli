@@ -7,8 +7,8 @@ Authenticates by extracting `JSESSIONID` from the local Chrome cookie store (mac
 ## Install
 
 ```sh
-npm install -g @zigbang-smarthome/eac-cli                   # npm
-brew install zigbang-smarthome/tap/eac-cli                  # Homebrew
+npm install -g @zigbang-smarthome/eac-cli
+brew install zigbang-smarthome/tap/eac-cli
 curl -fsSL https://github.com/zigbang-smarthome/eac-cli/releases/latest/download/install.sh | sh
 ```
 
@@ -18,67 +18,94 @@ Log in to eac.zigbang.in in Chrome first so the cookie is available locally.
 
 ```
 eac
-├── call <id> --prog <p> [--data <json>]    # raw named-service call (escape hatch)
-├── attach
-│   ├── new --prog <ea|draft|...>           # ZUNIECM_5030 → new EVI_SEQ
-│   ├── upload <seq> <files>                # fineuploader/request.do
-│   └── list <seq>                          # session.do → files on seq
-├── doc                                     # 결재문서 (ZUNIEWF_4500)
-│   ├── list [--box progress|approved|rejected|pending]
-│   ├── show <grono>                        # ZUNIEFI_4207
-│   └── recall <grono>                      # ApprovalStep + ZUNIEWF_4320
-├── temp                                    # EA 전표 (UD_0302_000)
-│   ├── list [--bstat V] [--stats C] ...    # ZUNIEFI_4200
-│   └── cancel-group <grono>                # ZUNIEFI_4202 (releases GRONO on 회수 doc)
-├── line                                    # 개인결재선
-│   ├── list                                # ZUNIEWF_2200
-│   └── approvers <seq> --grono <g>         # ZUNIEWF_4101
-├── submit                                  # generic expense submission primitives
-│   ├── temp --item <preset> --title ... --bldat ... --amount ... [--attach-dir ...]
-│   ├── grono --belnr ... --evi-seq ... --item ... --amount ... --bldat ...
-│   ├── approval --grono ... --item ... --attach-dir ...
-│   └── full --item ... --title ... --bldat ... --amount ... --attach-dir ...
-├── task                                    # high-level composed recipes
-│   └── jagi --month YYYYMM --bldat YYYYMMDD --receipt <원>
-└── config
-    ├── show
-    └── init
+├── voucher            전표 (FI, ZUNIEFI_*)
+│   ├── list                     ZUNIEFI_4200
+│   ├── show <BELNR|GRONO>       ZUNIEFI_4207
+│   ├── create                   전표 작성 (Steps 1-5 → BELNR)
+│   ├── request-approval <BELNR> 결재요청 (Steps 6-11 → GRONO + 상신)
+│   ├── cancel-group <GRONO>     그룹번호취소 (ZUNIEFI_4202)
+│   └── attach new|upload|list   전표 레이어 EVI_SEQ (fineuploader)
+├── approval           결재문서 (WF, ZUNIEWF_*)
+│   ├── list [--box]             ZUNIEWF_4500 결재함
+│   ├── recall <GRONO>           회수 (ApprovalStep+ZUNIEWF_4320)
+│   ├── attach new|upload|list   결재문서 레이어 EVI_SEQ (WF_ATTACH_FLAG 트리거)
+│   └── line
+│       ├── list                 ZUNIEWF_2200 개인결재선
+│       └── approvers <SEQ>      ZUNIEWF_4101
+├── <item>             from config.items.* (e.g. jagi)
+│   └── submit --month --bldat --receipt
+├── call <id> --prog [--data]    raw named-service escape hatch
+└── config show|init
 ```
 
 ## Quick examples
 
+### 자기관리비 한 방 상신
+
 ```sh
-# 자기관리비 한 번에 상신 (receipt × 70%, 결재단계 첨부까지 포함)
-eac task jagi --month 202605 --bldat 20260503 --receipt 44000
+eac jagi submit --month 202605 --bldat 20260503 --receipt 44000
+```
 
-# 진행중 결재 문서 보기
-eac doc list
+- Title: `2026년 5월 자기관리비` (from `preset.titleFormat`)
+- Amount: `floor(44000 × 0.7) = 30800` (from `preset.refund.rate`)
+- Attachments: `./자기관리비/202605/*` (from `preset.attachDirFormat`)
+- Runs Steps 1-11 (전표 작성 + 결재요청) including the 결재문서 레이어 첨부 필수 단계
 
-# 회수 + 재상신
-eac doc recall FI20260000023921
-eac temp cancel-group FI20260000023921
-eac task jagi --month 202604 --bldat 20260402 --receipt 44000
+### 회수하고 재상신
 
-# 개인 결재선 확인
-eac line list
-eac line approvers 0000000002 --grono FI20260000023921
+```sh
+eac approval recall FI20260000023922
+eac voucher cancel-group FI20260000023922
+eac jagi submit --month 202604 --bldat 20260402 --receipt 44000
+```
 
-# 업로드만 따로 (임시전표에 첨부 추가)
-SEQ=$(eac attach new --prog ea)
-eac attach upload "$SEQ" ./receipt.jpg,./extra.pdf
+### 전표만 작성하고 나중에 결재요청
 
-# 서비스 직접 호출 (wrapping 안 된 경우)
+```sh
+BELNR=$(eac voucher create --item jagi --title "임시" --bldat 20260503 --amount 30800 \
+  --attach-dir ./자기관리비/202605 | grep ^BELNR | awk '{print $2}')
+
+# …later…
+eac voucher request-approval "$BELNR" --item jagi --title "2026년 5월 자기관리비" \
+  --attach-dir ./자기관리비/202605
+```
+
+### 조회
+
+```sh
+eac voucher list                 # 임시전표 (BSTAT=V)
+eac voucher list --bstat '*' --stats '*'
+eac voucher show FI20260000023922
+eac voucher show 3200005520      # BELNR 로도 resolve (3개월 윈도우)
+
+eac approval list                        # 진행중 (기본)
+eac approval list --box approved --from 20260101
+eac approval line list
+eac approval line approvers 0000000002 --grono FI20260000023922
+```
+
+### 저수준 첨부 primitive
+
+```sh
+SEQ=$(eac approval attach new)
+eac approval attach upload "$SEQ" ./a.jpg,./b.pdf
+eac approval attach list "$SEQ"
+```
+
+### Raw service call (wrapping 안 된 경우)
+
+```sh
 eac call ZUNIEFI_4207 --prog DRAFT_0010 --data '{"GRONO":"FI20260000023922"}'
 ```
 
-## Submit layers (중요)
+## Two attachment layers (중요)
 
 UniDocu에는 **두 개의 별도 EVI_SEQ 레이어**가 있다:
 
-1. **EA 전표 레이어** (`PROG_LEGACY` = `ZB_0202_001`) — `ZUNIEFI_4006` 저장 시 `EVI_SEQ` 필드로 연결. `ZUNIEFI_4207`의 `URL.fileGroupId`에서 조회됨.
-2. **결재문서 레이어** (`PROG_DRAFT` = `DRAFT_0010`) — `ApprovalStep` body의 `EVI_SEQ` 필드로 연결. **이게 있어야 결재문서 리스트에 `WF_ATTACH_FLAG=X` (📎)가 뜬다.** 이 필드 없이 상신하면 결재자 입장에서 "첨부 누락"처럼 보임.
+1. **전표 레이어** (`voucher attach`) — `ZUNIEFI_4006`에 연결. `voucher show`의 `attach EVI_SEQ`에 표시됨.
+2. **결재문서 레이어** (`approval attach`) — `ApprovalStep` body의 `EVI_SEQ` 필드로 전달. **이게 있어야 결재함 리스트의 `WF_ATTACH_FLAG=X` (📎)가 뜬다.** 이 필드 없이 상신하면 결재자 입장에서 "첨부 누락"처럼 보임.
 
-`eac submit full` / `eac task jagi`는 두 레이어 모두에 파일을 올리고 `ApprovalStep`에 결재 EVI_SEQ를 포함해서 상신한다.
+`eac voucher request-approval` / `eac <item> submit` 은 두 레이어 모두에 파일을 올리고 `ApprovalStep`에 결재 EVI_SEQ를 포함해서 상신한다.
 
 ## Config (`~/.config/eac/config.json`)
 
@@ -101,13 +128,24 @@ UniDocu에는 **두 개의 별도 EVI_SEQ 레이어**가 있다:
       "evikb": "FI_21",
       "evikbText": "장려지원금",
       "wfLineSeq": "0000000002",
-      "wfLineLin1": "0000000816"
+      "wfLineLin1": "0000000816",
+      "preset": {
+        "titleFormat": "{year}년 {month}월 자기관리비",
+        "attachDirFormat": "자기관리비/{year}{month2}",
+        "refund": { "rate": 0.7 }
+      }
     }
   }
 }
 ```
 
-Item preset을 추가하면 `eac submit full --item <name>`으로 그대로 쓸 수 있다. e.g. 가족식사비/원격근무지원비는 같은 flow, `HKONT`/`EVIKB`/결재선만 바꾸면 됨.
+`items.*`에 추가한 preset은 자동으로 `eac <name> submit` 서브커맨드로 등록된다. e.g. `items.gaseok` 추가 → `eac gaseok submit` 바로 사용 가능.
+
+### Preset placeholders
+
+- `{year}` → 2026
+- `{month}` → 4 (no leading zero)
+- `{month2}` → 04
 
 ## Development
 
@@ -116,4 +154,4 @@ bun install
 bun run src/index.ts --help
 ```
 
-릴리즈는 `gh workflow run release.yml`로 트리거. oneup이 version bump + npm/Homebrew publish 자동화.
+Release: `gh workflow run release.yml` — oneup가 version bump + npm/Homebrew publish 자동화.

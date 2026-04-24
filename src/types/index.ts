@@ -17,12 +17,31 @@ export interface UserProfile {
 }
 
 export interface ReimbursementItem {
-  hkont: string;          // G/L account (e.g. "52010108" = 자기관리비)
+  /** G/L account (e.g. "52010108" = 자기관리비). */
+  hkont: string;
   hkontText: string;      // "판)복리후생비-자기관리비"
-  evikb: string;          // Document type code (e.g. "FI_21" = 장려지원금)
+  /** Document type code (e.g. "FI_21" = 장려지원금). */
+  evikb: string;
   evikbText: string;      // "장려지원금"
-  wfLineSeq: string;      // personal approval line SEQ — "0000000002" for [개인]-장려지원금
-  wfLineLin1: string;     // WF_LIN1 tied to SEQ — "0000000816"
+  /** personal approval line SEQ — e.g. "0000000002" for [개인]-장려지원금. */
+  wfLineSeq: string;
+  wfLineLin1: string;
+
+  /** Optional preset defaults for `eac <item> submit`.
+   *  If present, the per-item top-level command (e.g. `eac jagi`) will apply these
+   *  conventions so the user only has to supply --month/--bldat/--receipt. */
+  preset?: ItemPreset;
+}
+
+export interface ItemPreset {
+  /** Title template. `{year}`, `{month}`, `{month2}` are substituted.
+   *  e.g. "{year}년 {month}월 자기관리비" → "2026년 4월 자기관리비". */
+  titleFormat: string;
+  /** Attachment directory template. Same substitutions as titleFormat.
+   *  e.g. "자기관리비/{year}{month2}" → "자기관리비/202604". */
+  attachDirFormat: string;
+  /** Refund rule: `receipt × rate`, floor to integer won, optionally capped. */
+  refund?: { rate: number; cap?: number };
 }
 
 export interface ApprovalLine {
