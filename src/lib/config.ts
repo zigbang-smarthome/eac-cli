@@ -2,7 +2,7 @@
  * Per-user config file stored at ~/.config/eac/config.json.
  *
  * Holds the user profile (SAP fields) and reimbursement line presets so that
- * running `eac submit jagi --month 202605 ...` doesn't require re-entering
+ * `eac voucher create --item "자기관리비" ...` doesn't require re-entering
  * PERNR/KOSTL/HKONT/결재선 every time.
  */
 
@@ -16,7 +16,7 @@ const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 
 export interface EacConfig {
   user: UserProfile;
-  items: Record<string, ReimbursementItem>; // key = preset name, e.g. "jagi"
+  items: Record<string, ReimbursementItem>; // key = preset name, e.g. "자기관리비"
 }
 
 async function ensureConfigDir(): Promise<void> {

@@ -11,7 +11,7 @@
  * Note: 전표 작성 + 결재요청을 한 번에 하는 composite는 일부러 빼두었다.
  * 실패 시 (e.g. BELNR 발급 후 결재요청 단계 실패) 중간 상태가 숨겨져
  * 복구 동작을 헷갈리게 만든다. 한 방 실행이 필요하면 shell script에서
- * create → request-approval 두 단계를 명시적으로 조합 (examples/jagi.sh 참조).
+ * create → request-approval 두 단계를 명시적으로 조합 (README 참조).
  */
 
 import { defineCommand } from "citty";
