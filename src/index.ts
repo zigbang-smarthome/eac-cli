@@ -1,6 +1,11 @@
 import { defineCommand, runMain } from "citty";
+import { callCommand } from "./commands/call.ts";
+import { attachCommand } from "./commands/attach.ts";
+import { docCommand } from "./commands/doc.ts";
+import { tempCommand } from "./commands/temp.ts";
+import { lineCommand } from "./commands/line.ts";
 import { submitCommand } from "./commands/submit.ts";
-import { listCommand } from "./commands/list.ts";
+import { taskCommand } from "./commands/task.ts";
 import { configCommand } from "./commands/config.ts";
 
 const main = defineCommand({
@@ -9,8 +14,13 @@ const main = defineCommand({
     description: "CLI for eac.zigbang.in (E-Accounting / UniDocu)",
   },
   subCommands: {
+    call: callCommand,
+    attach: attachCommand,
+    doc: docCommand,
+    temp: tempCommand,
+    line: lineCommand,
     submit: submitCommand,
-    list: listCommand,
+    task: taskCommand,
     config: configCommand,
   },
 });

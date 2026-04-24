@@ -2,68 +2,112 @@
 
 CLI for eac.zigbang.in (E-Accounting / UniDocu).
 
-Authenticates by extracting `JSESSIONID` from the local Chrome cookie store (macOS Keychain-decrypted AES-128-CBC), then drives the UniDocu named-service API directly.
+Authenticates by extracting `JSESSIONID` from the local Chrome cookie store (macOS Keychain-decrypted AES-128-CBC), then drives the UniDocu named-service API directly over plain HTTP. No headless browser at runtime.
 
 ## Install
 
 ```sh
-# npm (pulls the platform-specific binary from GitHub Releases on postinstall)
-npm install -g @zigbang-smarthome/eac-cli
-
-# Homebrew
-brew install zigbang-smarthome/tap/eac-cli
-
-# Direct (curl | sh)
+npm install -g @zigbang-smarthome/eac-cli                   # npm
+brew install zigbang-smarthome/tap/eac-cli                  # Homebrew
 curl -fsSL https://github.com/zigbang-smarthome/eac-cli/releases/latest/download/install.sh | sh
 ```
 
-## Quick start
-
 Log in to eac.zigbang.in in Chrome first so the cookie is available locally.
 
-```sh
-# 자기관리비 상신 (2026년 5월분, 영수증 날짜 2026-05-03, 영수증 44,000원)
-eac submit jagi --month 202605 --bldat 20260503 --receipt 44000
+## Commands
 
-# 첨부 폴더 명시
-eac submit jagi --month 202605 --bldat 20260503 --receipt 44000 \
-  --attach-dir ./자기관리비/202605
-
-# 임시전표만 발행 (상신은 안 함)
-eac submit jagi --month 202605 --bldat 20260503 --receipt 44000 --dry
-
-# 진행중 결재문서 리스트
-eac list --box progress
-
-# 반려/회수 리스트
-eac list --box rejected
-
-# config 보기/초기화
-eac config show
-eac config init
+```
+eac
+├── call <id> --prog <p> [--data <json>]    # raw named-service call (escape hatch)
+├── attach
+│   ├── new --prog <ea|draft|...>           # ZUNIECM_5030 → new EVI_SEQ
+│   ├── upload <seq> <files>                # fineuploader/request.do
+│   └── list <seq>                          # session.do → files on seq
+├── doc                                     # 결재문서 (ZUNIEWF_4500)
+│   ├── list [--box progress|approved|rejected|pending]
+│   ├── show <grono>                        # ZUNIEFI_4207
+│   └── recall <grono>                      # ApprovalStep + ZUNIEWF_4320
+├── temp                                    # EA 전표 (UD_0302_000)
+│   ├── list [--bstat V] [--stats C] ...    # ZUNIEFI_4200
+│   └── cancel-group <grono>                # ZUNIEFI_4202 (releases GRONO on 회수 doc)
+├── line                                    # 개인결재선
+│   ├── list                                # ZUNIEWF_2200
+│   └── approvers <seq> --grono <g>         # ZUNIEWF_4101
+├── submit                                  # generic expense submission primitives
+│   ├── temp --item <preset> --title ... --bldat ... --amount ... [--attach-dir ...]
+│   ├── grono --belnr ... --evi-seq ... --item ... --amount ... --bldat ...
+│   ├── approval --grono ... --item ... --attach-dir ...
+│   └── full --item ... --title ... --bldat ... --amount ... --attach-dir ...
+├── task                                    # high-level composed recipes
+│   └── jagi --month YYYYMM --bldat YYYYMMDD --receipt <원>
+└── config
+    ├── show
+    └── init
 ```
 
-## Submit flow (자기관리비)
+## Quick examples
 
-The `submit jagi` command runs the full 11-step pipeline in one call:
+```sh
+# 자기관리비 한 번에 상신 (receipt × 70%, 결재단계 첨부까지 포함)
+eac task jagi --month 202605 --bldat 20260503 --receipt 44000
 
-1. `ZUNIEFI_4003` — 기본값 계산 (ZFBDT 등)
-2. `ZUNIECM_5030` (EA 메뉴) — EA 전표용 EVI_SEQ 채번
-3. `fineuploader/request.do` — EA 전표 영수증 업로드
-4. `ZUNIEFI_4006` — 비용항목 저장
-5. `ZUNIEFI_5000` — SAP posting (BELNR 채번)
-6. `ZUNIEFI_4203` — GRONO 예약
-7. `ZUNIECM_5030` (DRAFT_0010) — **결재문서용 EVI_SEQ 채번** ← 결재 첨부 레이어
-8. `fineuploader/request.do` — 결재문서 EVI_SEQ에 영수증 재업로드
-9. `ZUNIEWF_2200` — 개인결재선 목록 조회
-10. `ZUNIEWF_4101` — 결재자 리스트 조회
-11. `ApprovalStep` — 최종 상신 (`EVI_SEQ=<결재문서 EVI_SEQ>` 필수; 이 필드가 `WF_ATTACH_FLAG=X`의 트리거)
+# 진행중 결재 문서 보기
+eac doc list
 
-Steps 7–8 와 Step 11의 `EVI_SEQ` 필드 없이도 상신은 되지만 결재자 쪽 결재문서 리스트에 첨부 아이콘이 뜨지 않아 "첨부 누락" 상태가 된다.
+# 회수 + 재상신
+eac doc recall FI20260000023921
+eac temp cancel-group FI20260000023921
+eac task jagi --month 202604 --bldat 20260402 --receipt 44000
 
-## Config
+# 개인 결재선 확인
+eac line list
+eac line approvers 0000000002 --grono FI20260000023921
 
-`~/.config/eac/config.json`. SAP 필드(PERNR/BUKRS/KOSTL/HKONT 등)와 결재선 preset을 담는다. 없으면 shipped defaults (박영걸/ZB01135 기준) 사용.
+# 업로드만 따로 (임시전표에 첨부 추가)
+SEQ=$(eac attach new --prog ea)
+eac attach upload "$SEQ" ./receipt.jpg,./extra.pdf
+
+# 서비스 직접 호출 (wrapping 안 된 경우)
+eac call ZUNIEFI_4207 --prog DRAFT_0010 --data '{"GRONO":"FI20260000023922"}'
+```
+
+## Submit layers (중요)
+
+UniDocu에는 **두 개의 별도 EVI_SEQ 레이어**가 있다:
+
+1. **EA 전표 레이어** (`PROG_LEGACY` = `ZB_0202_001`) — `ZUNIEFI_4006` 저장 시 `EVI_SEQ` 필드로 연결. `ZUNIEFI_4207`의 `URL.fileGroupId`에서 조회됨.
+2. **결재문서 레이어** (`PROG_DRAFT` = `DRAFT_0010`) — `ApprovalStep` body의 `EVI_SEQ` 필드로 연결. **이게 있어야 결재문서 리스트에 `WF_ATTACH_FLAG=X` (📎)가 뜬다.** 이 필드 없이 상신하면 결재자 입장에서 "첨부 누락"처럼 보임.
+
+`eac submit full` / `eac task jagi`는 두 레이어 모두에 파일을 올리고 `ApprovalStep`에 결재 EVI_SEQ를 포함해서 상신한다.
+
+## Config (`~/.config/eac/config.json`)
+
+```json
+{
+  "user": {
+    "pernr": "ZB01135",
+    "bukrs": "K001",
+    "pernrName": "박영걸",
+    "wfIdText": "YG Park (박영걸)",
+    "kostl": "226020",
+    "kostlText": "Device Engineering",
+    "wfDept": "0000252100",
+    "wfDeptText": "Service Engineering"
+  },
+  "items": {
+    "jagi": {
+      "hkont": "52010108",
+      "hkontText": "판)복리후생비-자기관리비",
+      "evikb": "FI_21",
+      "evikbText": "장려지원금",
+      "wfLineSeq": "0000000002",
+      "wfLineLin1": "0000000816"
+    }
+  }
+}
+```
+
+Item preset을 추가하면 `eac submit full --item <name>`으로 그대로 쓸 수 있다. e.g. 가족식사비/원격근무지원비는 같은 flow, `HKONT`/`EVIKB`/결재선만 바꾸면 됨.
 
 ## Development
 
@@ -72,4 +116,4 @@ bun install
 bun run src/index.ts --help
 ```
 
-Release via `gh workflow run release.yml` — oneup가 version bump + publish-npm/publish-homebrew 자동화.
+릴리즈는 `gh workflow run release.yml`로 트리거. oneup이 version bump + npm/Homebrew publish 자동화.
