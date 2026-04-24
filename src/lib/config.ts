@@ -64,11 +64,6 @@ export const DEFAULT_CONFIG: EacConfig = {
       evikbText: "장려지원금",
       wfLineSeq: "0000000002",
       wfLineLin1: "0000000816",
-      preset: {
-        titleFormat: "{year}년 {month}월 자기관리비",
-        attachDirFormat: "자기관리비/{year}{month2}",
-        refund: { rate: 0.7 },
-      },
     },
   },
 };
