@@ -1,6 +1,37 @@
 /**
  * High-level operations on EAC (UniDocu). Each function wraps one or more
- * named-service calls. CLI commands should be thin shims over these.
+ * named-service calls. CLI commands are thin shims over these.
+ *
+ * Domain model
+ * ------------
+ * UniDocu exposes two related document spaces and two separate attachment layers:
+ *
+ *   전표 (FI)        : SAP 문서 (BELNR). Menu UD_0302_000. Services ZUNIEFI_*.
+ *   결재문서 (WF)     : 결재 워크플로우 객체 (GRONO, WF_KEY). Menu UFL_0401_*.
+ *                      Services ZUNIEWF_*.
+ *
+ * A voucher (전표) becomes an approval doc (결재문서) by being request-approval'd:
+ * that step reserves a GRONO on the voucher and submits it into a 결재함.
+ *
+ * Attachment layers (same receipt file, uploaded to *both* layers):
+ *
+ *   전표 레이어      : bound at ZUNIEFI_4006 via EVI_SEQ. Accountants see it in
+ *                      the 전표 상세 view.
+ *   결재문서 레이어   : passed as EVI_SEQ in the final ApprovalStep body. THIS is
+ *                      what flips WF_ATTACH_FLAG=X on the 결재함 list (approvers'
+ *                      📎 icon). Without this layer the approval doc looks empty
+ *                      to approvers even though the voucher has files.
+ *
+ * Stage boundaries
+ * ----------------
+ *   createTempDoc     → Steps 1-5 (ZUNIEFI_4003/ECM_5030/uploader/EFI_4006/EFI_5000)
+ *                       yields { belnr, eviSeqEa, zfbdt }
+ *   reserveGrono      → Step 6  (ZUNIEFI_4203) — GRONO 예약, not yet submitted
+ *   submitApproval    → Steps 7-11 (ECM_5030/uploader/WF_2200/WF_4101/ApprovalStep)
+ *
+ * No composite "do all 11 at once" helper is exposed on purpose: failures
+ * between stages produce visible, recoverable state (e.g. a dangling BELNR
+ * without GRONO can be retried via request-approval rather than started over).
  */
 
 import { callNS, uploadFile as uploadFileRaw, listSession, type ClientContext, type SessionFile } from "./client.ts";
@@ -462,25 +493,6 @@ export async function submitApproval(
   return { eviSeqDraft, message };
 }
 
-/** Full task: create temp doc → reserve GRONO → submit approval. */
-export async function submitExpenseFull(
-  ctx: ClientContext,
-  params: {
-    user: UserProfile;
-    item: ReimbursementItem;
-    title: string;
-    budat: string;
-    bldat: string;
-    amountWon: number;
-    attachFiles: string[];
-    iBody?: string;
-  },
-): Promise<{ eviSeqEa: string; belnr: string; grono: string; eviSeqDraft: string; message: string }> {
-  const { eviSeqEa, belnr, zfbdt } = await createTempDoc(ctx, params);
-  const grono = await reserveGrono(ctx, { ...params, zfbdt, belnr, eviSeqEa });
-  const { eviSeqDraft, message } = await submitApproval(ctx, { ...params, grono });
-  return { eviSeqEa, belnr, grono, eviSeqDraft, message };
-}
 
 /* ── helpers ───────────────────────────────────────────────────────── */
 

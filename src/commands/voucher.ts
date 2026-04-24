@@ -5,9 +5,13 @@
  *   voucher show <BELNR|GRONO>           ZUNIEFI_4207
  *   voucher create                       Steps 1-5 (전표 작성 → BELNR)
  *   voucher request-approval <BELNR>     Steps 6-11 (결재요청 → GRONO + 상신)
- *   voucher submit                       Steps 1-11 (create + request-approval 합성)
  *   voucher cancel-group <GRONO>         ZUNIEFI_4202 (그룹번호취소)
  *   voucher attach new|upload|list       전표 레이어 EVI_SEQ
+ *
+ * Note: 전표 작성 + 결재요청을 한 번에 하는 composite는 일부러 빼두었다.
+ * 실패 시 (e.g. BELNR 발급 후 결재요청 단계 실패) 중간 상태가 숨겨져
+ * 복구 동작을 헷갈리게 만든다. 한 방 실행이 필요하면 shell script에서
+ * create → request-approval 두 단계를 명시적으로 조합 (examples/jagi.sh 참조).
  */
 
 import { defineCommand } from "citty";
@@ -23,7 +27,6 @@ import {
   createTempDoc,
   reserveGrono,
   submitApproval,
-  submitExpenseFull,
   createAttachSeq,
   uploadAttachments,
   listAttachments,
@@ -202,40 +205,6 @@ const requestApprovalSub = defineCommand({
   },
 });
 
-/* ── submit (Steps 1-11: create + request-approval 합성) ─────── */
-
-const submitSub = defineCommand({
-  meta: { name: "submit", description: "전표 작성 + 결재요청 한 번에 (Steps 1-11). 가장 흔한 원-샷 상신 경로." },
-  args: {
-    item: { type: "string", required: true, description: "Preset name from config.items" },
-    title: { type: "string", required: true, description: "Document title" },
-    budat: { type: "string", description: "Posting date YYYYMMDD (default: today)" },
-    bldat: { type: "string", required: true, description: "Receipt date YYYYMMDD" },
-    amount: { type: "string", required: true, description: "Amount in won (integer)" },
-    "attach-dir": { type: "string", required: true, description: "Directory of attachment files" },
-    "i-body": { type: "string", description: "Optional inline body override" },
-  },
-  async run({ args }) {
-    const { ctx, cfg } = await loadCtx();
-    const attachFiles = collectAttachments(args["attach-dir"]);
-    const res = await submitExpenseFull(ctx, {
-      user: requireUser(cfg),
-      item: resolveItem(cfg, args.item),
-      title: args.title,
-      budat: args.budat ?? today(),
-      bldat: args.bldat,
-      amountWon: parseInt(args.amount, 10),
-      attachFiles,
-      iBody: args["i-body"],
-    });
-    console.log(res.message);
-    console.log(`GRONO            ${res.grono}`);
-    console.log(`BELNR            ${res.belnr}`);
-    console.log(`EVI_SEQ (FI)     ${res.eviSeqEa}`);
-    console.log(`EVI_SEQ (draft)  ${res.eviSeqDraft}`);
-  },
-});
-
 /* ── cancel-group ──────────────────────────────────────────────── */
 
 const cancelGroupSub = defineCommand({
@@ -312,7 +281,6 @@ export const voucherCommand = defineCommand({
     show: showSub,
     create: createSub,
     "request-approval": requestApprovalSub,
-    submit: submitSub,
     "cancel-group": cancelGroupSub,
     attach: attachCommand,
   },

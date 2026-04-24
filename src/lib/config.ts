@@ -57,7 +57,7 @@ export const DEFAULT_CONFIG: EacConfig = {
     wfDeptText: "Service Engineering",
   },
   items: {
-    jagi: {
+    "자기관리비": {
       hkont: "52010108",
       hkontText: "판)복리후생비-자기관리비",
       evikb: "FI_21",
