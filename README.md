@@ -20,10 +20,18 @@ Before first use: open Chrome and log in to `https://eac.zigbang.in` at least on
 
 ## Authentication
 
-- Chrome stores cookies at `~/Library/Application Support/Google/Chrome/Default/Cookies`, AES-128-CBC-encrypted with a key derived from the `"Chrome Safe Storage"` Keychain password.
-- On every invocation, `eac` copies the cookie DB to tmpdir, decrypts the `JSESSIONID` for `*.zigbang.in`, and uses it for API calls.
+- EAC uses Google SSO + MS Azure AD SAML — login itself can't be automated. The CLI piggybacks on your normal Chrome session.
+- Each run, `eac` copies Chrome's cookie DB to tmpdir, decrypts the `JSESSIONID` for `*.zigbang.in` (AES-128-CBC, key from `"Chrome Safe Storage"` Keychain), and pings EAC to confirm the session is alive.
+- **If the session is missing or expired**, the CLI opens Chrome at `https://eac.zigbang.in/unidocu/view.do` and prompts:
+  1. Finish the Google SSO login in Chrome.
+  2. **Quit Chrome (Cmd+Q)** so the new `JSESSIONID` is flushed to disk. Chrome's cookie monster keeps cookies in memory and writes to the SQLite store on a delayed batch schedule — without an explicit quit the CLI may keep reading a stale value.
+  3. Return to the terminal and hit Enter — the CLI re-reads the fresh cookie and continues.
+  4. Reopen Chrome normally afterwards.
+
+  Tip: turn on Chrome → Settings → On startup → *"Continue where you left off"* so the session cookie survives the Cmd+Q cycle. EAC re-login becomes infrequent (only when the SAP-side session truly expires).
 - macOS may prompt for Keychain access the first time (click *Always Allow*).
-- There is no `eac login`. If the session expires, log in to eac.zigbang.in in Chrome again and re-run.
+- Override: set `EAC_JSESSIONID=<value>` to bypass the keychain entirely and use a cookie sourced elsewhere (e.g. extracted from Playwright/CDP-controlled Chrome). Useful when EAC is open in a non-default Chrome profile or in CI scripts.
+- Non-TTY environments (CI, piped scripts) error out instead of prompting — pass `EAC_JSESSIONID` explicitly there.
 
 ---
 
@@ -78,13 +86,21 @@ eac
 │   ├── request-approval <BELNR>   결재요청 (Steps 6-11 → GRONO + 상신)
 │   ├── cancel-group <GRONO>       그룹번호취소 (ZUNIEFI_4202)
 │   └── attach new|upload|list     전표 레이어 EVI_SEQ primitive
+├── corpcard          법인카드(공용) — 카드사 거래 → 임시전표
+│   ├── list                       ZUNIEFI_1000 (미정산 거래)
+│   └── create <CRD_SEQ>           ZUNIEFI_4006 + ZUNIEFI_1009 → BELNR
 ├── approval           결재문서 (WF, ZUNIEWF_*)
 │   ├── list [--box]               ZUNIEWF_4500 (결재함)
 │   ├── recall <GRONO>             회수 (ApprovalStep + ZUNIEWF_4320)
 │   ├── attach new|upload|list     결재 레이어 EVI_SEQ primitive
 │   └── line
-│       ├── list                   ZUNIEWF_2200 (개인결재선)
-│       └── approvers <SEQ>        ZUNIEWF_4101
+│       ├── list                          ZUNIEWF_2200 (개인결재선 목록)
+│       ├── show <SEQ> [--json]           ZUNIEWF_2203 (결재선 + 결재자)
+│       ├── approvers <SEQ> --grono <G>   ZUNIEWF_4101 (특정 GRONO용)
+│       ├── save <SEQ> <approvers.json>   ZUNIEWF_2201 (결재자 통째 저장)
+│       ├── add <SEQ> <user> [--at lev]   사용자 추가 (read → splice → save)
+│       ├── remove <SEQ> <level|wf_id>    결재자 제거 (read → splice → save)
+│       └── search-user <name>            ZUNIEWF_1035 (이름으로 EAC 사용자 검색)
 ├── call <id> --prog [--data]      raw named-service escape hatch
 └── config show|init               ~/.config/eac/config.json
 ```
@@ -111,6 +127,26 @@ eac
 
 **`voucher attach {new, upload, list}`** — 전표 레이어 EVI_SEQ 직접 조작 (보통 `create`가 자동 처리하므로 쓸 일 많지 않음).
 
+### `eac corpcard`
+
+법인카드(공용) 사용내역을 카드사 데이터 기반으로 임시전표화한다. 자기관리비/일반경비와 달리 영수증을 직접 첨부하지 않는다 (카드사가 SAP 후단에 거래 데이터로 자동 첨부).
+
+**`corpcard list [--from] [--to] [--merch]`** — 미정산 카드 거래 목록 (`ZUNIEFI_1000`). 이미 전표화된 거래는 빠진다. 각 행이 `CRD_SEQ`로 식별됨.
+
+**`corpcard create <CRD_SEQ> --hkont --remark [--budat] [--bldat]`** — 카드 거래를 임시전표로 변환 (`ZUNIEFI_4006` + `ZUNIEFI_1009` → BELNR). 첨부 EVI_SEQ 호출 없음.
+
+```
+--hkont <code>       G/L 계정 (예: 52010102 회식대 / 52060101 회의비 / 52050104 접대비-신용카드 / 52030203 시내교통비)
+--hkont-text <name>  표기용 (옵션)
+--remark <text>      적요. 형식: [법인카드/거래처/참석자] 또는 [법인카드/출발→도착]
+--budat <YYYYMMDD>   전기일 (default: today; 결제월 마감 후엔 익월 1일 강제)
+--bldat <YYYYMMDD>   증빙일 (default: 카드 승인일)
+```
+
+발급된 BELNR은 그대로 `eac voucher request-approval <BELNR> --item 법인카드 --title "..."`로 결재요청. 결재선은 `[개인]-일반경비` 그대로 (`성민지 → Leah Song`).
+
+> 참고: 법인카드는 회사 정책상 부가세 V3 (불공제 매입세액)을 강제로 적용. EVIKB=FI_12 (법인카드기명식). MWSKZ/EVIKB는 코드에서 자동 세팅.
+
 ### `eac approval`
 
 **`approval list [--box progress|approved|rejected|pending]`** — `ZUNIEWF_4500`. 📎 표시로 결재 레이어 첨부 유무 한눈에 보임.
@@ -119,8 +155,21 @@ eac
 
 **`approval attach {new, upload, list}`** — 결재 레이어 EVI_SEQ 직접 조작 (보통 `request-approval`이 자동 처리).
 
-**`approval line list`** — 개인결재선 목록 (`ZUNIEWF_2200`).  
-**`approval line approvers <SEQ> --grono <G>`** — 해당 결재선의 실제 결재자 리스트 (`ZUNIEWF_4101`).
+**`approval line list`** — 개인결재선 목록 (`ZUNIEWF_2200`).
+
+**`approval line show <SEQ>`** — 결재선의 결재자를 그 자체로 조회 (`ZUNIEWF_2203`). `--json`을 붙이면 raw 배열을 출력 — 그대로 `line save` 입력으로 사용 가능.
+
+**`approval line approvers <SEQ> --grono <G>`** — 특정 결재문서(GRONO)에 묶인 결재자 평가 결과 (`ZUNIEWF_4101`). 결재선 자체보다는 *그 문서가 진짜 누구를 거치는가*를 본다.
+
+**`approval line save <SEQ> <approvers.json>`** — 결재자 리스트 통째 저장 (`ZUNIEWF_2201`). 파일은 `line show --json` 출력 형식.
+
+**`approval line add <SEQ> <name|wf_id> [--at lev]`** — 결재선에 사용자 한 명 추가. `<name>`이면 `ZUNIEWF_1035`로 검색해 단일 매칭일 때만 진행. `--at`은 1-based 위치 (없으면 끝에 추가). 내부적으로 `show → splice → save`.
+
+**`approval line remove <SEQ> <level|wf_id>`** — 결재선에서 한 명 제거. 숫자면 1-based level, 아니면 `WF_ID` (예: `ZB01010`)로 매칭.
+
+**`approval line search-user <name>`** — EAC 사용자 검색 (`ZUNIEWF_1035`). 한글/영문 단편 모두 가능.
+
+> 결재선 **생성/삭제** 자체는 아직 자동화 안 됨 (수동 UI에서 한 번도 캡쳐 안 잡힘). 새 라인이 필요하면 EAC UI에서 생성한 뒤 `add/remove`/`save`로 결재자만 자동화.
 
 ### `eac call`
 

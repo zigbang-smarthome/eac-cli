@@ -65,5 +65,16 @@ export const DEFAULT_CONFIG: EacConfig = {
       wfLineSeq: "0000000002",
       wfLineLin1: "0000000816",
     },
+    "법인카드": {
+      // hkont here is a placeholder — corpcard create takes --hkont per transaction.
+      // For request-approval the row's stored HKONT is what counts; this entry just
+      // carries EVIKB/wfLineSeq for the WF flow.
+      hkont: "52010102",
+      hkontText: "판)복리후생비-회식대",
+      evikb: "FI_12",
+      evikbText: "법인카드기명식",
+      wfLineSeq: "0000000004",
+      wfLineLin1: "0000000924",
+    },
   },
 };

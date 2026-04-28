@@ -3,14 +3,14 @@
  */
 
 import { loadConfig, DEFAULT_CONFIG } from "./config.ts";
-import { extractJSESSIONID } from "./auth.ts";
+import { ensureSession } from "./auth.ts";
 import type { ClientContext } from "./client.ts";
 import type { UserProfile, ReimbursementItem } from "../types/index.ts";
 import type { EacConfig } from "./config.ts";
 
 export async function loadCtx(): Promise<{ ctx: ClientContext; cfg: EacConfig }> {
   const cfg = (await loadConfig()) ?? DEFAULT_CONFIG;
-  const jsessionid = extractJSESSIONID();
+  const jsessionid = await ensureSession();
   const ctx: ClientContext = { jsessionid, userId: cfg.user.pernr, bukrs: cfg.user.bukrs };
   return { ctx, cfg };
 }
