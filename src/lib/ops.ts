@@ -241,10 +241,23 @@ export async function findApprovalDoc(
   ctx: ClientContext,
   grono: string,
   box: ApprovalBox = "progress",
-  range: { from: string; to: string } = defaultYearRange(),
+  range?: { from: string; to: string },
 ): Promise<ApprovalDocRow | null> {
-  const rows = await listApprovalDocs(ctx, box, range);
-  return rows.find((r) => r.GRONO === grono) ?? null;
+  // ZUNIEWF_4500 caps 조회 at 3 months. Default to a rolling 3-month window
+  // ending today (the recall path always operates on recent docs anyway).
+  const r = range ?? last3MonthsRange();
+  const rows = await listApprovalDocs(ctx, box, r);
+  return rows.find((row) => row.GRONO === grono) ?? null;
+}
+
+function last3MonthsRange(): { from: string; to: string } {
+  // ZUNIEWF_4500 enforces 최대 3개월 strictly. Stay well inside (~60 days) to
+  // avoid edge-case rejection. In-flight 결재문서 are always recent anyway.
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const fmt = (d: Date) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  const to = new Date();
+  const from = new Date(to.getTime() - 60 * 24 * 3600 * 1000);
+  return { from: fmt(from), to: fmt(to) };
 }
 
 /** Recall an in-progress approval document.
@@ -772,15 +785,25 @@ function nextMonth23rd(yyyymmdd: string): string {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
 }
 
+/** Resolve MWSKZ for a card transaction. EAC's UD_0201_001 form defaults this
+ *  based on whether VAT is separated on the receipt:
+ *    TAX > 0  → V3 (10% 매입_과세_신용카드) — typical retail with 부가세 분리
+ *    TAX == 0 → T0 (0% 매입_세액 무관)    — 영세율/면세 (e.g. BSP항공권, 해외출장)
+ *  접대비(3H)/면세사업(3D) 등 특수 케이스가 필요하면 호출부에서 mwskz를 직접 전달. */
+function resolveMwskz(tax: string): "V3" | "T0" {
+  return parseFloat(tax || "0") > 0 ? "V3" : "T0";
+}
+
 /** ZUNIEFI_4006 (검증) + ZUNIEFI_1009 (SAP posting → BELNR). 카드는 첨부 EVI_SEQ 없음
  *  (영수증은 카드사가 SAP 후단에 자동 첨부). */
 export async function createCorpCardVoucher(
   ctx: ClientContext,
-  p: CorpCardCreateParams,
+  p: CorpCardCreateParams & { mwskz?: string },
 ): Promise<{ belnr: string }> {
   const { user, card } = p;
   const bldat = p.bldat ?? card.APPR_DATE;
   const zfbdt = p.zfbdt ?? nextMonth23rd(bldat);
+  const mwskz = p.mwskz ?? resolveMwskz(card.TAX);
 
   const formFields: Record<string, string> = {
     SELECTED: "1",
@@ -824,7 +847,7 @@ export async function createCorpCardVoucher(
     ADRNR: "0000010746",
     KTOKK: "Z230", ZWELS: "",
     ZFBDT: zfbdt, GL_ALIAS: "", XCPDK: "", J_1KFREPRE: "",
-    MWSKZ: "V3", AKONT_PAY: "",
+    MWSKZ: mwskz, AKONT_PAY: "",
     WRBTR_READ_ONLY: card.TOTAL,
     CHARGETOTAL: card.AMOUNT, CHARGETOTAL_Slash: "",
     WMWST_READ_ONLY: card.TAX,
@@ -846,7 +869,7 @@ export async function createCorpCardVoucher(
     KOSTL: user.kostl, KOSTL_: "", KOSTL_TXT: user.kostlText,
     PROJK: "", PROJK_: "", PROJK_TXT: "",
     AUFNR: "", AUFNR_: "", AUFNR_TXT: "",
-    MWSKZ: "V3",
+    MWSKZ: mwskz,
     SGTXT: p.sgtxt,
   };
   const tableParamsString = JSON.stringify({ IT_DATA: [itDataRow], IT_ATTACH: [] });

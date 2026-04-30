@@ -80,7 +80,9 @@ const recallSub = defineCommand({
   async run({ args }) {
     const box = validateBox(args.box);
     const { ctx } = await loadCtx();
-    const row = await findApprovalDoc(ctx, args.grono, box, defaultYearRange());
+    // Default 3-month rolling window inside findApprovalDoc — server caps
+    // ZUNIEWF_4500 at "최대 3개월" so don't pass defaultYearRange() (12 months).
+    const row = await findApprovalDoc(ctx, args.grono, box);
     if (!row) { console.error(`GRONO ${args.grono} not found in box ${box}`); process.exit(1); }
     const msg = await recallApprovalDoc(ctx, row, args.comment);
     console.log(msg || "recalled");
