@@ -241,15 +241,18 @@ const cancelGroupSub = defineCommand({
   },
   async run({ args }) {
     const { ctx, cfg } = await loadCtx();
-    // STATS=C(회수) or R(반려) — both end up as a temp 전표 holding a GRONO
     const rows = await listTempDocs(ctx, {
       ...last3MonthsRange(),
       bstat: "V", stats: "*",
     }, cfg.user);
     const row = rows.find((r) => r.GRONO === args.grono);
     if (!row) { console.error(`전표 with GRONO=${args.grono} not found in last 3 months`); process.exit(1); }
-    if (row.STATS !== "C" && row.STATS !== "R") {
-      console.error(`BELNR ${row.BELNR} STATS=${row.STATS} (${row.STATS_TXT}) — only 회수(C)/반려(R) can be cancel-group'd`);
+    // Allowed states:
+    //  C = 회수, R = 반려, 1 = popup-pending (GRONO reserved via ZUNIEFI_4203 but
+    //      ApprovalStep never fired — i.e. requestApproval popup opened then closed)
+    //  Refuse 2/4/anything else: doc is mid-decision and should be `approval recall`'d first.
+    if (!["C", "R", "1"].includes(row.STATS)) {
+      console.error(`BELNR ${row.BELNR} STATS=${row.STATS} (${row.STATS_TXT}) — must be 회수(C)/반려(R)/popup-pending(1). For an in-progress doc, use \`approval recall\` first.`);
       process.exit(1);
     }
     await cancelTempDocGroup(ctx, row);
