@@ -22,6 +22,7 @@ import {
   PROG_LEGACY,
   listTempDocs,
   cancelTempDocGroup,
+  deleteTempDoc,
   showApprovalDoc,
   parseFileGroupIdFromUrl,
   createTempDoc,
@@ -164,7 +165,7 @@ const requestApprovalSub = defineCommand({
     belnr: { type: "positional", required: true, description: "BELNR of an existing 전표 (STATS=미상신)" },
     item: { type: "string", required: true, description: "Preset name from config.items" },
     title: { type: "string", required: true, description: "Document title (used for 결재문서 제목)" },
-    "attach-dir": { type: "string", required: true, description: "Directory of attachment files" },
+    "attach-dir": { type: "string", description: "Directory of attachment files. Optional for 법인카드 (영수증 자동); required for 자기관리비/일반경비 to flip 결재함의 📎 표시." },
     "i-body": { type: "string", description: "Optional inline body override" },
   },
   async run({ args }) {
@@ -193,8 +194,18 @@ const requestApprovalSub = defineCommand({
       amountWon,
       belnr: row.BELNR,
       eviSeqEa: row.EVI_SEQ,
+      // Mirror the actual saved row (MWSKZ, HKONT, CRD_SEQ — these diverge from
+      // item defaults for 법인카드: V3 not T0, real card-charged HKONT, CRD_SEQ).
+      rowOverrides: {
+        MWSKZ: row.MWSKZ,
+        HKONT: row.HKONT,
+        HKONT_TXT: row.HKONT_TXT,
+        CRD_SEQ: (row as any).CRD_SEQ ?? "",
+        EVIKB: row.EVIKB,
+        EVIKB_TXT: row.EVIKB_TXT,
+      },
     });
-    const attachFiles = collectAttachments(args["attach-dir"]);
+    const attachFiles = args["attach-dir"] ? collectAttachments(args["attach-dir"]) : [];
     const res = await submitApproval(ctx, {
       user, item, title: args.title, amountWon,
       grono, attachFiles, iBody: args["i-body"],
@@ -202,26 +213,59 @@ const requestApprovalSub = defineCommand({
     console.log(res.message);
     console.log(`GRONO            ${grono}`);
     console.log(`EVI_SEQ (draft)  ${res.eviSeqDraft}`);
+    if (attachFiles.length === 0) {
+      console.log(`(no attach-dir → 결재함 📎 표시 없음. 법인카드는 정상; 자기관리비/일반경비는 영수증 누락이니 회수해서 다시 올릴 것)`);
+    }
   },
 });
 
 /* ── cancel-group ──────────────────────────────────────────────── */
 
 const cancelGroupSub = defineCommand({
-  meta: { name: "cancel-group", description: "그룹번호취소 (ZUNIEFI_4202). Releases GRONO from a 회수 전표 so it can be re-submitted." },
+  meta: { name: "cancel-group", description: "그룹번호취소 (ZUNIEFI_4202). Releases GRONO from a 회수/반려 전표 so it can be edited or deleted." },
   args: {
     grono: { type: "positional", required: true, description: "GRONO to release" },
   },
   async run({ args }) {
     const { ctx, cfg } = await loadCtx();
+    // STATS=C(회수) or R(반려) — both end up as a temp 전표 holding a GRONO
     const rows = await listTempDocs(ctx, {
       ...last3MonthsRange(),
-      bstat: "V", stats: "C",
+      bstat: "V", stats: "*",
     }, cfg.user);
     const row = rows.find((r) => r.GRONO === args.grono);
-    if (!row) { console.error(`회수 전표 with GRONO=${args.grono} not found (must be BSTAT=V, STATS=C)`); process.exit(1); }
+    if (!row) { console.error(`전표 with GRONO=${args.grono} not found in last 3 months`); process.exit(1); }
+    if (row.STATS !== "C" && row.STATS !== "R") {
+      console.error(`BELNR ${row.BELNR} STATS=${row.STATS} (${row.STATS_TXT}) — only 회수(C)/반려(R) can be cancel-group'd`);
+      process.exit(1);
+    }
     await cancelTempDocGroup(ctx, row);
-    console.log(`GRONO ${args.grono} canceled. BELNR ${row.BELNR} is now 미상신 and ready to re-submit.`);
+    console.log(`GRONO ${args.grono} canceled. BELNR ${row.BELNR} is now 미상신.`);
+  },
+});
+
+/* ── delete ────────────────────────────────────────────────────── */
+
+const deleteSub = defineCommand({
+  meta: { name: "delete", description: "임시전표삭제 (ZUNIEFI_4103). Wipes a 미상신 BELNR. For 법인카드 entries this also returns the CRD_SEQ to the unprocessed pool so it can be reposted with corrected HKONT/SGTXT." },
+  args: {
+    belnr: { type: "positional", required: true, description: "BELNR to delete (must be 미상신: GRONO blank)" },
+  },
+  async run({ args }) {
+    const { ctx, cfg } = await loadCtx();
+    const rows = await listTempDocs(ctx, {
+      ...last3MonthsRange(),
+      bstat: "V", stats: "*",
+    }, cfg.user);
+    const row = rows.find((r) => r.BELNR === args.belnr);
+    if (!row) { console.error(`임시전표 BELNR=${args.belnr} not found in last 3 months`); process.exit(1); }
+    if (row.GRONO) {
+      console.error(`BELNR ${args.belnr} still attached to GRONO ${row.GRONO}.`);
+      console.error(`Run \`eac voucher cancel-group ${row.GRONO}\` first to detach it.`);
+      process.exit(1);
+    }
+    await deleteTempDoc(ctx, row);
+    console.log(`BELNR ${args.belnr} 임시전표삭제 완료.`);
   },
 });
 
@@ -282,6 +326,7 @@ export const voucherCommand = defineCommand({
     create: createSub,
     "request-approval": requestApprovalSub,
     "cancel-group": cancelGroupSub,
+    delete: deleteSub,
     attach: attachCommand,
   },
 });

@@ -159,6 +159,19 @@ export async function cancelTempDocGroup(ctx: ClientContext, row: TempDocRow): P
   await callNS(ctx, "ZUNIEFI_4202", PROG_EA_MENU, fields);
 }
 
+/** 임시전표삭제 — wipes the BELNR entirely. Resolved at runtime via UI as
+ *  `$u.programSetting.getValue('deleteStatementMultiRFC')` = `ZUNIEFI_4103`.
+ *  Use case: after a 반려, you `cancel-group` to drop the GRONO, then `delete`
+ *  the BELNR so the underlying card transaction (or the source line) reappears
+ *  in the unprocessed list and can be re-posted with corrected fields (e.g.
+ *  HKONT). The voucher row must already be detached from any GRONO; the server
+ *  will reject the call otherwise. */
+export async function deleteTempDoc(ctx: ClientContext, row: TempDocRow): Promise<void> {
+  await callNS(ctx, "ZUNIEFI_4103", PROG_EA_MENU, {
+    tableParamsString: JSON.stringify({ IT_DATA: [row] }),
+  });
+}
+
 /* ── 결재문서 (ZUNIEWF_4500 grid) ──────────────────────────────────── */
 
 export interface ApprovalDocRow {
@@ -550,9 +563,14 @@ export async function reserveGrono(
     amountWon: number;
     belnr: string;
     eviSeqEa: string;
+    /** Override defaults from row when item-derived guesses don't match (e.g.
+     *  법인카드: MWSKZ=V3 not T0, CRD_SEQ from card transaction, HKONT/HKONT_TXT
+     *  whatever the form actually saved). Pass `row` from listTempDocs to keep
+     *  the row identity stable. */
+    rowOverrides?: Partial<TempDocRow>;
   },
 ): Promise<string> {
-  const { user, item, title, budat, bldat, zfbdt, amountWon, belnr, eviSeqEa } = params;
+  const { user, item, title, budat, bldat, zfbdt, amountWon, belnr, eviSeqEa, rowOverrides } = params;
   const submitRow = {
     SELECTED: "1", GRONO: "",
     BSTAT_TXT: "임시전표", STATS_TXT: "미상신",
@@ -579,6 +597,7 @@ export async function reserveGrono(
     APPR_STAT_TXT: "", APPR_STATS_TXT: "", APPR_STATS: "", APPR_STAT: "",
     APPR_SEQ_STAT_TXT: "", APPR_SEQ_STAT_INT: "",
     APPR_SEQ_STATS_TXT: "", APPR_SEQ_STATS: "", APPR_SEQ_STAT: "",
+    ...(rowOverrides ?? {}),
   };
   const r = await callNS(ctx, "ZUNIEFI_4203", PROG_EA_MENU, {
     tableParamsString: JSON.stringify({ IT_DATA: [submitRow] }),

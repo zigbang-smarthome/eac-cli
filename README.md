@@ -85,6 +85,7 @@ eac
 │   ├── create                     전표 작성 (Steps 1-5 → BELNR)
 │   ├── request-approval <BELNR>   결재요청 (Steps 6-11 → GRONO + 상신)
 │   ├── cancel-group <GRONO>       그룹번호취소 (ZUNIEFI_4202)
+│   ├── delete <BELNR>             임시전표삭제 (ZUNIEFI_4103)
 │   └── attach new|upload|list     전표 레이어 EVI_SEQ primitive
 ├── corpcard          법인카드(공용) — 카드사 거래 → 임시전표
 │   ├── list                       ZUNIEFI_1000 (미정산 거래)
@@ -123,7 +124,9 @@ eac
 
 **`voucher request-approval <BELNR>`** — 결재요청. Steps 6-11. GRONO 발급 + 실제 상신. `--attach-dir` 필수 (결재 레이어 첨부).
 
-**`voucher cancel-group <GRONO>`** — 그룹번호취소 (`ZUNIEFI_4202`). 회수(`STATS=C`)된 전표에 붙은 GRONO를 풀어준다. 풀린 BELNR은 다시 결재요청 가능.
+**`voucher cancel-group <GRONO>`** — 그룹번호취소 (`ZUNIEFI_4202`). 회수(`STATS=C`) 또는 반려(`STATS=R`)된 전표에 붙은 GRONO를 풀어준다. 풀린 BELNR은 다시 결재요청 가능 (수정 사항이 없으면 `request-approval`로 바로 재상신, HKONT/적요 등 수정해야 한다면 `delete` 후 새로 `create`).
+
+**`voucher delete <BELNR>`** — 임시전표삭제 (`ZUNIEFI_4103`). GRONO가 비어있는(미상신) 임시전표를 완전 삭제한다. 법인카드 정산 건이라면 원래의 카드 거래(`CRD_SEQ`)가 미정산 풀로 돌아와 `corpcard list`/`corpcard create`로 다시 잡을 수 있다. GRONO가 붙어있으면 먼저 `cancel-group`을 거쳐야 한다.
 
 **`voucher attach {new, upload, list}`** — 전표 레이어 EVI_SEQ 직접 조작 (보통 `create`가 자동 처리하므로 쓸 일 많지 않음).
 
@@ -246,18 +249,42 @@ eac voucher request-approval 3200005520 \
 
 ### 아이템 자체를 잘못 골랐을 때 (FI_22 → FI_21)
 
-전표(BELNR)는 `HKONT`/`EVIKB` 확정 후 SAP에 posting되므로 item을 바꾸려면 **새 전표 필요**. 기존 것은 회수만 해두고 새로 create:
+전표(BELNR)는 `HKONT`/`EVIKB` 확정 후 SAP에 posting되므로 item을 바꾸려면 **새 전표 필요**. 기존 것은 회수 → 그룹번호취소 → 임시전표삭제 후 새로 create:
 
 ```sh
 # 잘못된 item
 eac approval recall       FI20260000023877
 eac voucher cancel-group  FI20260000023877
-# 기존 BELNR은 방치 (또는 EAC UI에서 임시전표삭제)
+eac voucher delete        3200005641   # 임시전표 완전 삭제
 
 # 올바른 item 으로 새로 시작
 BELNR=$(eac voucher create --item "자기관리비" ...)
 eac voucher request-approval "$BELNR" --item "자기관리비" ...
 ```
+
+### 법인카드: 반려된 후 HKONT 잘못 골랐던 경우
+
+`회식대(52010102)` 와 `회의비(52060101)` 처럼 잘못 분류했다가 회계팀 반려를 받았을 때. 카드 거래(`CRD_SEQ`)는 살리고 HKONT/적요만 다시 잡으면 된다.
+
+```sh
+# 1) 반려 결재문서의 GRONO 풀어내기
+eac voucher cancel-group  FI20260000023988    # GRONO 가 붙어있던 회수/반려 전표 detach
+
+# 2) 임시전표 자체를 삭제 → CRD_SEQ 가 미정산 풀로 복귀
+eac voucher delete        3200005642
+
+# 3) 카드 거래 다시 잡기 (CRD_SEQ 그대로 — list 로 확인)
+eac corpcard list --merch 이마트24
+BELNR=$(eac corpcard create 20260421001000020116 \
+  --hkont 52010102 \
+  --hkont-text "판)복리후생비-회식대" \
+  --remark "[법인카드/이마트24청담리테일점/박영걸, 오현아]")
+
+# 4) 결재요청
+eac voucher request-approval "$BELNR" --item 법인카드 --title "[법인카드/...]"
+```
+
+> 💡 회계팀 룰: 참석자가 **전원 직원**이면 회식대(`52010102`), **외부인 1명 이상** + 사전 회의 기안서가 있어야만 회의비(`52060101`).
 
 ### 조회 / 디버깅
 
