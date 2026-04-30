@@ -637,9 +637,15 @@ export async function submitApproval(
     grono: string;
     attachFiles: string[];
     iBody?: string;
+    /** "품의 첨부 (원품의 외)" rows for the DRAFT_0010 popup. Travel-cost 결재
+     *  is reject'd by 회계 unless the row carries the originating Flex 출장
+     *  품의서 URL. WF_ITKD codes (from ZUNIECM_3001 FOBJ=WF_ITKD): A=원품의,
+     *  B=날인품의, C=기타. URL must be a fully-qualified http(s) link — the
+     *  popup-side validator rejects bare paths. */
+    refDocs?: Array<{ URL: string; WF_ITKD: "A" | "B" | "C" }>;
   },
 ): Promise<{ eviSeqDraft: string; message: string }> {
-  const { user, item, title, amountWon, grono, attachFiles, iBody } = params;
+  const { user, item, title, amountWon, grono, attachFiles, iBody, refDocs } = params;
 
   const eviSeqDraft = await createAttachSeq(ctx, PROG_DRAFT);
   await uploadAttachments(ctx, eviSeqDraft, attachFiles);
@@ -668,6 +674,18 @@ export async function submitApproval(
     WF_AGREE: "",
   }));
 
+  // "품의 첨부 (원품의 외)" rows. The popup form's request handler renames
+  // WF_ITKD → ITKD before posting; mirror that here.
+  const IT_ITKD = (refDocs ?? []).map((d) => {
+    if (!/^https?:\/\//i.test(d.URL)) {
+      throw new Error(`refDoc URL must start with http:// or https:// — got: ${d.URL}`);
+    }
+    if (!["A", "B", "C"].includes(d.WF_ITKD)) {
+      throw new Error(`refDoc WF_ITKD must be A(원품의)/B(날인품의)/C(기타) — got: ${d.WF_ITKD}`);
+    }
+    return { SELECTED: "0", URL: d.URL, ITKD: d.WF_ITKD };
+  });
+
   const r = await callNS(ctx, "ApprovalStep", PROG_DRAFT, {
     BUKRS: user.bukrs, WF_GB: "10", showAsPopup: "true",
     PERNR: user.pernr, WF_TYPE: "C", WF_AMOUNT: String(amountWon),
@@ -676,7 +694,7 @@ export async function submitApproval(
     EVI_SEQ: eviSeqDraft,
     WF_SECUR: "",
     targetNamedServiceId: "ZUNIEWF_4201",
-    tableParamsString: JSON.stringify({ IT_DATA1 }),
+    tableParamsString: JSON.stringify({ IT_DATA1, IT_ITKD }),
   });
   const message: string = r?.NSReturn?.stringReturns?.message ?? "";
   if (!/상신/.test(message)) throw new ApiError("ApprovalStep", 200, `unexpected message: ${message}`, JSON.stringify(r));

@@ -167,6 +167,8 @@ const requestApprovalSub = defineCommand({
     title: { type: "string", required: true, description: "Document title (used for 결재문서 제목)" },
     "attach-dir": { type: "string", description: "Directory of attachment files. Optional for 법인카드 (영수증 자동); required for 자기관리비/일반경비 to flip 결재함의 📎 표시." },
     "i-body": { type: "string", description: "Optional inline body override" },
+    "ref-url": { type: "string", description: "원품의/날인품의 URL (출장비 결재에 회계팀이 요구). Format: http(s):// + 풀 URL. Repeatable via comma. Pair with --ref-kind." },
+    "ref-kind": { type: "string", description: "원품의 종류 코드. A=원품의 (default, Flex 출장 품의서 등), B=날인품의, C=기타. URL이 여러 개면 콤마로 같은 순서대로." },
   },
   async run({ args }) {
     const { ctx, cfg } = await loadCtx();
@@ -206,9 +208,20 @@ const requestApprovalSub = defineCommand({
       },
     });
     const attachFiles = args["attach-dir"] ? collectAttachments(args["attach-dir"]) : [];
+    const refUrls = (args["ref-url"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const refKindsRaw = (args["ref-kind"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const refKinds = refUrls.map((_, i) => refKindsRaw[i] ?? refKindsRaw[0] ?? "A");
+    const refDocs = refUrls.map((url, i) => {
+      const k = refKinds[i];
+      if (!["A", "B", "C"].includes(k)) {
+        console.error(`--ref-kind must be A/B/C — got '${k}'`); process.exit(1);
+      }
+      return { URL: url, WF_ITKD: k as "A" | "B" | "C" };
+    });
     const res = await submitApproval(ctx, {
       user, item, title: args.title, amountWon,
       grono, attachFiles, iBody: args["i-body"],
+      refDocs: refDocs.length ? refDocs : undefined,
     });
     console.log(res.message);
     console.log(`GRONO            ${grono}`);
