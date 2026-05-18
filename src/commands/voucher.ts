@@ -27,6 +27,7 @@ import {
   parseFileGroupIdFromUrl,
   createTempDoc,
   reserveGrono,
+  reserveGronoBatch,
   submitApproval,
   createAttachSeq,
   uploadAttachments,
@@ -232,6 +233,83 @@ const requestApprovalSub = defineCommand({
   },
 });
 
+/* ── request-approval-batch (Multiple BELNR → 1 GRONO) ─────────── */
+
+const requestApprovalBatchSub = defineCommand({
+  meta: { name: "request-approval-batch", description: "Batch 결재요청: 여러 BELNR을 하나의 GRONO로 묶어 상신. 출장비 다건 정산에 사용." },
+  args: {
+    belnrs: { type: "positional", required: true, description: "BELNR list, comma-separated (e.g. 3200005920,3200005921,...)" },
+    item: { type: "string", required: true, description: "Preset name from config.items" },
+    title: { type: "string", required: true, description: "Document title (used for 결재문서 제목)" },
+    "i-body": { type: "string", description: "Optional inline body override" },
+    "ref-url": { type: "string", description: "원품의/날인품의 URL. Format: http(s):// + 풀 URL. Repeatable via comma. Pair with --ref-kind." },
+    "ref-kind": { type: "string", description: "원품의 종류 코드. A=원품의 (default), B=날인품의, C=기타. URL이 여러 개면 콤마로 같은 순서대로." },
+  },
+  async run({ args }) {
+    const { ctx, cfg } = await loadCtx();
+    const user = requireUser(cfg);
+    const item = resolveItem(cfg, args.item);
+
+    const belnrList = args.belnrs.split(",").map((s) => s.trim()).filter(Boolean);
+    if (belnrList.length === 0) { console.error("No BELNR provided"); process.exit(1); }
+
+    // Resolve every BELNR row up front so we fail fast on missing/already-grouped entries.
+    const tempDocs = await listTempDocs(ctx, {
+      ...last3MonthsRange(),
+      bstat: "V", stats: "*",
+    }, user);
+    const items: Parameters<typeof reserveGronoBatch>[1]["items"] = [];
+    for (const belnr of belnrList) {
+      const row = tempDocs.find((r) => r.BELNR === belnr);
+      if (!row) { console.error(`BELNR ${belnr} not found in temp docs`); process.exit(1); }
+      if (row.GRONO) { console.error(`BELNR ${belnr} already has GRONO=${row.GRONO}`); process.exit(1); }
+      items.push({
+        belnr: row.BELNR,
+        budat: row.BUDAT.replace(/-/g, ""),
+        bldat: row.BLDAT.replace(/-/g, ""),
+        zfbdt: row.ZFBDT.replace(/-/g, ""),
+        amountWon: parseInt(row.WRBTR.split(".")[0], 10),
+        eviSeqEa: row.EVI_SEQ,
+        sgtxt: row.SGTXT,
+        rowOverrides: {
+          MWSKZ: row.MWSKZ,
+          HKONT: row.HKONT,
+          HKONT_TXT: row.HKONT_TXT,
+          CRD_SEQ: (row as any).CRD_SEQ ?? "",
+          EVIKB: row.EVIKB,
+          EVIKB_TXT: row.EVIKB_TXT,
+        },
+      });
+    }
+
+    const totalAmount = items.reduce((s, it) => s + it.amountWon, 0);
+
+    const grono = await reserveGronoBatch(ctx, { user, item, items });
+
+    const refUrls = (args["ref-url"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const refKindsRaw = (args["ref-kind"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const refKinds = refUrls.map((_, i) => refKindsRaw[i] ?? refKindsRaw[0] ?? "A");
+    const refDocs = refUrls.map((url, i) => {
+      const k = refKinds[i];
+      if (!["A", "B", "C"].includes(k)) {
+        console.error(`--ref-kind must be A/B/C — got '${k}'`); process.exit(1);
+      }
+      return { URL: url, WF_ITKD: k as "A" | "B" | "C" };
+    });
+
+    const res = await submitApproval(ctx, {
+      user, item, title: args.title, amountWon: totalAmount,
+      grono, attachFiles: [], iBody: args["i-body"],
+      refDocs: refDocs.length ? refDocs : undefined,
+    });
+    console.log(res.message);
+    console.log(`GRONO            ${grono}`);
+    console.log(`BELNRs           ${belnrList.join(", ")}`);
+    console.log(`Total            ₩${totalAmount.toLocaleString()}`);
+    console.log(`EVI_SEQ (draft)  ${res.eviSeqDraft}`);
+  },
+});
+
 /* ── cancel-group ──────────────────────────────────────────────── */
 
 const cancelGroupSub = defineCommand({
@@ -341,6 +419,7 @@ export const voucherCommand = defineCommand({
     show: showSub,
     create: createSub,
     "request-approval": requestApprovalSub,
+    "request-approval-batch": requestApprovalBatchSub,
     "cancel-group": cancelGroupSub,
     delete: deleteSub,
     attach: attachCommand,

@@ -621,6 +621,65 @@ export async function reserveGrono(
   return grono;
 }
 
+/** Step 6 (batch): GRONO 예약 with multiple BELNR rows. ZUNIEFI_4203's IT_DATA
+ *  accepts an array — each row contributes a BELNR to the same GRONO. Used to
+ *  group multi-line travel expense settlements into a single approval doc. */
+export async function reserveGronoBatch(
+  ctx: ClientContext,
+  params: {
+    user: UserProfile;
+    item: ReimbursementItem;
+    items: Array<{
+      belnr: string;
+      budat: string;
+      bldat: string;
+      zfbdt: string;
+      amountWon: number;
+      eviSeqEa: string;
+      sgtxt: string;
+      rowOverrides?: Partial<TempDocRow>;
+    }>;
+  },
+): Promise<string> {
+  const { user, item, items } = params;
+  if (items.length === 0) throw new Error("reserveGronoBatch: empty items[]");
+  const submitRows = items.map((it) => ({
+    SELECTED: "1", GRONO: "",
+    BSTAT_TXT: "임시전표", STATS_TXT: "미상신",
+    BLART: "KE", BLART_TXT: "e-Accounting Doc.",
+    EVIKB: item.evikb, EVIKB_TXT: item.evikbText,
+    BELNR: it.belnr, DOKNR: it.belnr,
+    BUDAT: it.budat, BLDAT: it.bldat, ZFBDT: it.zfbdt,
+    LIFNR: user.pernr, LIFNR_TXT: user.pernrName,
+    WRBTR: String(it.amountWon), DMBTR: String(it.amountWon), WAERS: "KRW",
+    SGTXT: it.sgtxt,
+    PERNR: user.pernr, PERNR_TXT: user.wfIdText,
+    "EVIKB_@": "", EVIKB_ADD: "",
+    MWSKZ: "T0", STATS: "", GRONO_IMAGE: "",
+    CHECK_FLG: "", AUTO_FLG: "",
+    ZLSCH_TXT: "실시간이체", ZLSCH: "R",
+    XBLNR: `${user.pernr}/${user.pernrName}`,
+    STATUS: "", NAME1: "",
+    KOSTL_TXT: user.kostlText, KOSTL: user.kostl,
+    INV_SEQ: "",
+    HKONT_TXT: item.hkontText, HKONT: item.hkont,
+    GJAHR: it.budat.slice(0, 4),
+    EVI_SEQ: it.eviSeqEa,
+    CRD_SEQ: "", BUKRS: user.bukrs, BSTAT: "V",
+    APPR_STAT_TXT: "", APPR_STATS_TXT: "", APPR_STATS: "", APPR_STAT: "",
+    APPR_SEQ_STAT_TXT: "", APPR_SEQ_STAT_INT: "",
+    APPR_SEQ_STATS_TXT: "", APPR_SEQ_STATS: "", APPR_SEQ_STAT: "",
+    ...(it.rowOverrides ?? {}),
+  }));
+  const r = await callNS(ctx, "ZUNIEFI_4203", PROG_EA_MENU, {
+    tableParamsString: JSON.stringify({ IT_DATA: submitRows }),
+  });
+  const oUrl: string = r?.NSReturn?.stringReturns?.O_URL ?? "";
+  const grono = oUrl.match(/GRONO=([^&]+)/)?.[1] ?? "";
+  if (!grono) throw new ApiError("ZUNIEFI_4203", 200, "GRONO not parsed from O_URL", oUrl);
+  return grono;
+}
+
 /** Default inline body used by the 결재요청 form (copied verbatim from UI payload). */
 export const DEFAULT_I_BODY = `<strong>*원품의 또는 별도 정책에 근거한 비용집행내용을 아래 양식에 따라 작성하되, 필요시 추가내용 작성 가능</strong><br><p style="color:red;">(본 안내사항은 삭제 후 내용 작성)</p><br><br><strong>1. 지급조건</strong><br>   (ex) 계약체결 후 30일 이내 계약금 00원 지급, 1차 납품일로부터 30일 이내 중도금 00원 지급, 매월 00일/매분기 말일 지급<br><br><strong>2. 지급조건 달성여부</strong><br>   (ex) 계약체결일, 납품일, 수령일 등 기재<br><br><strong>3. 지급기한</strong><br>   - 계약서 또는 정책상 가장 늦은 지급기일 (만약 조기 집행하는 경우 그 사유를 명시)<br><br><strong>4. 기타</strong><br>   - 기타 지급품의에 기술되어야 하는 내용 기재`;
 
