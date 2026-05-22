@@ -17,10 +17,16 @@ import { ApiError } from "./errors.ts";
 
 const BASE = "https://eac.zigbang.in";
 
-// Cache-bust values injected by server into every page load. Observed not to rotate over days.
-// If the server starts rejecting requests, refresh from a page's staticProperties.
-const WEB_DATA_CACHE_BUST = "1774310304657";
-const REQUIRE_BUST = "1774310304657";
+// Cache-bust values injected by server into every page load. The server rotates these
+// periodically; when our hardcoded values go stale, requests get back a
+// RequireBustMismatchException whose body includes the server's current `webDataCacheBust`.
+// callNS extracts that value, caches it for the rest of the process, and retries once.
+// Last known good value (refresh when releasing if convenient — the self-healing path
+// will recover automatically otherwise):
+const WEB_DATA_CACHE_BUST = "1779407976939";
+const REQUIRE_BUST = "1779407976939";
+
+let cachedBust: string | null = null;
 
 export interface ClientContext {
   jsessionid: string;
@@ -61,36 +67,57 @@ export async function callNS(
   programId: string,
   fields: Record<string, string>,
 ): Promise<NSResponse> {
-  const body = new URLSearchParams({
-    ...fields,
-    namedServiceId,
-    IS_KEY_PROGRAM_ID: programId,
-    webDataCacheBust: WEB_DATA_CACHE_BUST,
-    requireBust: REQUIRE_BUST,
-    staticUserID: ctx.userId,
-    staticIS_KEY_BUKRS: ctx.bukrs,
-  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const bust = cachedBust ?? WEB_DATA_CACHE_BUST;
+    const body = new URLSearchParams({
+      ...fields,
+      namedServiceId,
+      IS_KEY_PROGRAM_ID: programId,
+      webDataCacheBust: bust,
+      requireBust: bust,
+      staticUserID: ctx.userId,
+      staticIS_KEY_BUKRS: ctx.bukrs,
+    });
 
-  const res = await fetch(`${BASE}/unidocu/namedService/call.do?__namedServiceId=${namedServiceId}`, {
-    method: "POST",
-    headers: { ...commonHeaders(ctx), "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
-    body,
-  });
+    const res = await fetch(`${BASE}/unidocu/namedService/call.do?__namedServiceId=${namedServiceId}`, {
+      method: "POST",
+      headers: { ...commonHeaders(ctx), "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+      body,
+    });
 
-  const text = await res.text();
-  if (res.status !== 200) {
-    throw new ApiError(namedServiceId, res.status, text.slice(0, 400), text);
+    const text = await res.text();
+    if (res.status !== 200) {
+      if (attempt === 0 && res.status === 400 && text.includes("RequireBustMismatchException")) {
+        const newBust = extractBustFromMismatch(text);
+        if (newBust && newBust !== bust) {
+          cachedBust = newBust;
+          continue;
+        }
+      }
+      throw new ApiError(namedServiceId, res.status, text.slice(0, 400), text);
+    }
+
+    let json: NSResponse;
+    try { json = JSON.parse(text); }
+    catch { throw new ApiError(namedServiceId, res.status, "response is not JSON", text); }
+
+    const osReturn = json?.NSReturn?.exportMaps?.OS_RETURN;
+    if (osReturn?.TYPE === "E") {
+      throw new ApiError(namedServiceId, res.status, osReturn.MESSAGE ?? "unknown error", text);
+    }
+    return json;
   }
+  throw new ApiError(namedServiceId, 0, "unreachable: callNS retry loop exited without resolving", "");
+}
 
-  let json: NSResponse;
-  try { json = JSON.parse(text); }
-  catch { throw new ApiError(namedServiceId, res.status, "response is not JSON", text); }
-
-  const osReturn = json?.NSReturn?.exportMaps?.OS_RETURN;
-  if (osReturn?.TYPE === "E") {
-    throw new ApiError(namedServiceId, res.status, osReturn.MESSAGE ?? "unknown error", text);
+function extractBustFromMismatch(text: string): string | null {
+  try {
+    const obj = JSON.parse(text);
+    const v = obj?.webDataCacheBust;
+    return typeof v === "string" && v ? v : null;
+  } catch {
+    return null;
   }
-  return json;
 }
 
 export interface UploadedFile {
