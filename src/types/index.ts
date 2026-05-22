@@ -5,15 +5,23 @@
  * — keep key names exactly as the server expects (uppercase SAP aliases).
  */
 
+/**
+ * User profile passed into ops.ts as `user`. Fields split into two layers:
+ *
+ *   STORED (~/.config/eac/config.json — identity, hard for the CLI to discover)
+ *     pernr, bukrs, kostl
+ *
+ *   LIVE   (filled by loadCtx() from view.do `staticProperties.user` each run —
+ *           server-canonical display labels, refreshed every command)
+ *     pernrName, wfIdText, kostlText
+ */
 export interface UserProfile {
   pernr: string;         // Employee number, e.g. "ZB01135"
   bukrs: string;         // Company code, e.g. "K001"
-  pernrName: string;     // Display name, e.g. "박영걸"
-  wfIdText: string;      // Full display like "YG Park (박영걸)"
   kostl: string;         // Cost center, e.g. "226020"
-  kostlText: string;     // "Device Engineering"
-  wfDept: string;        // Department code
-  wfDeptText: string;    // "Service Engineering"
+  pernrName: string;     // Display name, e.g. "박영걸"     (live)
+  wfIdText: string;      // "YG Park (박영걸)"               (live)
+  kostlText: string;     // "Device Engineering"             (live)
 }
 
 export interface ReimbursementItem {

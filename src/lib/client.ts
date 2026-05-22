@@ -17,15 +17,20 @@ import { ApiError } from "./errors.ts";
 
 const BASE = "https://eac.zigbang.in";
 
-// Cache-bust values injected by server into every page load. Observed not to rotate over days.
-// If the server starts rejecting requests, refresh from a page's staticProperties.
-const WEB_DATA_CACHE_BUST = "1774310304657";
-const REQUIRE_BUST = "1774310304657";
+// Last-resort cache-bust fallback. The server rotates these (currently every
+// few months); when out-of-date, calls fail with RequireBustMismatchException.
+// Prefer scraping `staticProperties.{requireBust,webDataCacheBust}` from
+// `/unidocu/view.do` at session-bootstrap time — see lib/whoami.ts.
+const FALLBACK_BUST = "1779407976939";
 
 export interface ClientContext {
   jsessionid: string;
   userId: string;       // staticUserID (PERNR / EAC user id, e.g. "ZB01135")
   bukrs: string;        // staticIS_KEY_BUKRS (company code, e.g. "K001")
+  /** Server-rotating cache-bust values. Populated by loadCtx() from view.do.
+   *  When absent, falls back to the module-level constant. */
+  requireBust?: string;
+  webDataCacheBust?: string;
 }
 
 export interface NSResponse {
@@ -65,8 +70,8 @@ export async function callNS(
     ...fields,
     namedServiceId,
     IS_KEY_PROGRAM_ID: programId,
-    webDataCacheBust: WEB_DATA_CACHE_BUST,
-    requireBust: REQUIRE_BUST,
+    webDataCacheBust: ctx.webDataCacheBust ?? ctx.requireBust ?? FALLBACK_BUST,
+    requireBust: ctx.requireBust ?? FALLBACK_BUST,
     staticUserID: ctx.userId,
     staticIS_KEY_BUKRS: ctx.bukrs,
   });

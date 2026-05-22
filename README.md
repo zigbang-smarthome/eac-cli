@@ -16,21 +16,21 @@ brew install zigbang-smarthome/tap/eac-cli
 curl -fsSL https://github.com/zigbang-smarthome/eac-cli/releases/latest/download/install.sh | sh
 ```
 
-Before first use: open Chrome and log in to `https://eac.zigbang.in` at least once so the session cookie lands in your Chrome cookie store. The CLI reads that cookie each run.
+Before first use: open one of the supported browsers (Chrome / Edge / Brave) and log in to `https://eac.zigbang.in` at least once so the session cookie lands in that browser's cookie store. The CLI reads the cookie each run.
 
 ## Authentication
 
-- EAC uses Google SSO + MS Azure AD SAML — login itself can't be automated. The CLI piggybacks on your normal Chrome session.
-- Each run, `eac` copies Chrome's cookie DB to tmpdir, decrypts the `JSESSIONID` for `*.zigbang.in` (AES-128-CBC, key from `"Chrome Safe Storage"` Keychain), and pings EAC to confirm the session is alive.
-- **If the session is missing or expired**, the CLI opens Chrome at `https://eac.zigbang.in/unidocu/view.do` and prompts:
-  1. Finish the Google SSO login in Chrome.
-  2. **Quit Chrome (Cmd+Q)** so the new `JSESSIONID` is flushed to disk. Chrome's cookie monster keeps cookies in memory and writes to the SQLite store on a delayed batch schedule — without an explicit quit the CLI may keep reading a stale value.
+- EAC uses Google SSO + MS Azure AD SAML — login itself can't be automated. The CLI piggybacks on your normal browser session.
+- Each run, `eac` walks a list of supported Chromium-family browsers (Chrome → Edge → Brave), copies the first cookie DB it finds to tmpdir, decrypts the `JSESSIONID` for `*.zigbang.in` (AES-128-CBC, key from `"<Browser> Safe Storage"` Keychain entry), and pings EAC to confirm the session is alive. Force a specific browser with `EAC_BROWSER=chrome|edge|brave`.
+- **If the session is missing or expired**, the CLI opens the detected browser at `https://eac.zigbang.in/unidocu/view.do` and prompts:
+  1. Finish the Google SSO login in the browser.
+  2. **Quit that browser (Cmd+Q)** so the new `JSESSIONID` is flushed to disk. Chromium-family cookie monsters keep cookies in memory and write to the SQLite store on a delayed batch schedule — without an explicit quit the CLI may keep reading a stale value.
   3. Return to the terminal and hit Enter — the CLI re-reads the fresh cookie and continues.
-  4. Reopen Chrome normally afterwards.
+  4. Reopen the browser normally afterwards.
 
-  Tip: turn on Chrome → Settings → On startup → *"Continue where you left off"* so the session cookie survives the Cmd+Q cycle. EAC re-login becomes infrequent (only when the SAP-side session truly expires).
+  Tip: in your browser's startup settings, enable "Continue where you left off" so the session cookie survives the Cmd+Q cycle. EAC re-login becomes infrequent (only when the SAP-side session truly expires).
 - macOS may prompt for Keychain access the first time (click *Always Allow*).
-- Override: set `EAC_JSESSIONID=<value>` to bypass the keychain entirely and use a cookie sourced elsewhere (e.g. extracted from Playwright/CDP-controlled Chrome). Useful when EAC is open in a non-default Chrome profile or in CI scripts.
+- Override: set `EAC_JSESSIONID=<value>` to bypass the keychain entirely and use a cookie sourced elsewhere (e.g. extracted from Playwright/CDP-controlled browser). Useful in non-default profiles or CI scripts.
 - Non-TTY environments (CI, piped scripts) error out instead of prompting — pass `EAC_JSESSIONID` explicitly there.
 
 ---
@@ -185,7 +185,27 @@ eac call ZUNIEFI_4207 --prog DRAFT_0010 --data '{"GRONO":"FI20260000023922"}'
 ### `eac config`
 
 - `config show` — 현재 config JSON 프린트
-- `config init` — `~/.config/eac/config.json` 없으면 기본값 생성
+- `config init` — EAC 세션만으로 본인의 SAP 필드를 자동 탐지해서 `~/.config/eac/config.json` 작성. 매칭된 결재선의 결재자 체인을 함께 출력해서 사람이 한눈에 검증 가능.
+  - **자동 탐지**:
+    - `PERNR`/`BUKRS`/`KOSTL` (저장) ← view.do `staticProperties.user` JSON
+    - `pernrName`/`wfIdText`/`kostlText` (저장 안 함, **매 실행 시 live**) ← 같은 view.do payload 에서 loadCtx 가 매번 refresh
+    - `items.*.wfLineSeq`/`wfLineLin1` ← 개인결재선(ZUNIEWF_2200) 의 `SEQ_TXT` 와 ITEM_PRESETS 의 `evikbText` 매칭 — 여러 item 이 같은 EVIKB 공유 시 동일한 결재선 식별자 주입
+    - `items.*.hkont`/`evikb`/`*_Text` ← 코드의 `ITEM_PRESETS` (회사 정책 고정값)
+    - cache-bust (`requireBust`/`webDataCacheBust`) ← 같은 view.do 응답. 서버가 주기적으로 회전시키므로 hardcode 하지 않음.
+  - **검증 출력**: 매칭된 각 결재선에 대해 `결재자: 1차 <approver1> → 2차 <approver2>` + 그 결재선을 공유하는 item 목록을 그룹핑해서 표시.
+  - **PERNR 변경 감지**: stored PERNR ≠ 세션 PERNR 이면 commands 전체가 hard error (다른 사람 PERNR 로 SAP 호출하는 사고 방지). `init --force` 또는 브라우저 세션 정리 필요.
+  - `--force` 기존 config 덮어쓰기 (PERNR 동일 시 `items.*` 머지)
+  - `--print` 파일 쓰지 않고 stdout으로만 출력 (dry-run)
+  - `--yes` 비대화형 — 자동 탐지값을 묻지 않고 그대로 사용
+
+### 지원 브라우저 cookie 경로
+
+자동 탐지 우선순위:
+- Google Chrome (`~/Library/Application Support/Google/Chrome/Default/Cookies`)
+- Microsoft Edge (`~/Library/Application Support/Microsoft Edge/Default/Cookies`)
+- Brave (`~/Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies`)
+
+`EAC_BROWSER=chrome|edge|brave` 로 강제 지정 시 그 브라우저만 시도. `Default` 프로필만 본다 — 다른 프로필을 쓰는 경우 `EAC_JSESSIONID` 직접 주입.
 
 ---
 
@@ -304,19 +324,14 @@ eac approval line approvers 0000000002 --grono FI20260000023922
 
 ## Config
 
-`~/.config/eac/config.json`. 한 번 설정하고 `--item <name>` 으로 재사용.
+`~/.config/eac/config.json`. `eac config init` 으로 생성. 한 번 설정하고 `--item <name>` 으로 재사용.
 
 ```json
 {
   "user": {
-    "pernr": "ZB01135",
+    "pernr": "<PERNR>",
     "bukrs": "K001",
-    "pernrName": "박영걸",
-    "wfIdText": "YG Park (박영걸)",
-    "kostl": "226020",
-    "kostlText": "Device Engineering",
-    "wfDept": "0000252100",
-    "wfDeptText": "Service Engineering"
+    "kostl": "<KOSTL>"
   },
   "items": {
     "자기관리비": {
@@ -324,19 +339,39 @@ eac approval line approvers 0000000002 --grono FI20260000023922
       "hkontText": "판)복리후생비-자기관리비",
       "evikb": "FI_21",
       "evikbText": "장려지원금",
-      "wfLineSeq": "0000000002",
-      "wfLineLin1": "0000000816"
+      "wfLineSeq": "<wfLineSeq>",
+      "wfLineLin1": "<wfLineLin1>"
     }
   }
 }
 ```
 
-새 item 추가 시 필요한 값:
+저장 필드는 식별자(IDs)만:
+- `user`: `pernr` / `bukrs` / `kostl` — SAP 식별자. 표시 이름/부서명 등 *_Text 라벨은 매 실행 시 `view.do` 의 `staticProperties.user` 에서 live 로 보충되므로 저장 안 함.
+- `items.*`: `wfLineSeq` / `wfLineLin1` 는 사용자별 개인결재선 식별자. 나머지(`hkont`/`evikb`/`*_Text`) 는 회사 정책 정적값이라 코드의 `ITEM_PRESETS` 가 들고 있고 init 때 같이 직렬화된다.
+
+### 내장 ITEM_PRESETS
+
+`eac config init` 이 다음 item 이름을 인식해서 [개인]-결재선과 자동 매핑한다 (회사 정책 기반):
+
+| Item 이름 | EVIKB | HKONT | HKONT_TXT | 비고 |
+|---|---|---|---|---|
+| `자기관리비` | FI_21 (장려지원금) | 52010108 | 판)복리후생비-자기관리비 | |
+| `가족회식비` | FI_21 (장려지원금) | 52010109 | 판)복리후생비-가족식사비 | 서버 라벨은 "가족식사비" |
+| `원격근무지원비` | FI_21 (장려지원금) | 53050102 | 판)소모품비-사무용품 | 복리후생비 계정 아님 |
+| `법인카드` | FI_12 (법인카드기명식) | 52010102 (placeholder) | 판)복리후생비-회식대 | corpcard create 시 카드별 HKONT 별도 지정 |
+
+> 체력단련비는 EAC가 아닌 flex 에서 처리하므로 preset 없음.
+
+같은 EVIKB(예: FI_21)를 쓰는 3 item (자기관리비/가족회식비/원격근무지원비)은 **하나의 `[개인]-장려지원금` 결재선을 공유**한다. init 이 결재선을 한 번 발견한 뒤 셋 모두에 동일한 `wfLineSeq`/`wfLineLin1` 을 주입한다.
+
+### 새 item 추가
+
+ITEM_PRESETS 에 없는 item 을 사용하려면 `src/lib/config.ts` 의 `ITEM_PRESETS` 에 한 줄 추가하고 재빌드:
 - `hkont` — G/L 계정 (e.g. `52010177` 판)복리후생비-기타)
 - `evikb` — 전표 종류 코드 (e.g. `FI_21` 장려지원금, `FI_22` 일반경비)
-- `wfLineSeq` / `wfLineLin1` — 해당 item의 개인결재선 (참고: `eac approval line list`로 확인)
 
-Preset key는 한글 이름(`자기관리비`, `가족식사비`, `원격근무지원비`, …) 사용 권장.
+그 다음 EAC UI 에서 `[개인]-<evikbText>` 결재선을 등록(이미 있으면 skip)하고 `eac config init --force` 로 wfLineSeq 자동 매핑.
 
 ---
 
