@@ -55,7 +55,7 @@ const initCommand = defineCommand({
     force: { type: "boolean", description: "overwrite existing config (existing items.* presets are merged)" },
     print: { type: "boolean", description: "print resulting config to stdout instead of writing" },
     yes: { type: "boolean", description: "non-interactive — accept all auto-detected values without prompting" },
-    gsber: { type: "string", description: "GSBER (Business Area) override — needed when view.do doesn't push it (e.g. 호갱노노=K300)" },
+    gsber: { type: "string", description: "GSBER (Business Area) override — needed when view.do doesn't push it. Check EA전표작성 > 사업영역 드롭다운." },
   },
   async run({ args }) {
     const existing = await loadConfig();
@@ -168,7 +168,7 @@ const initCommand = defineCommand({
         const kostlLabel = me.kostlText ? `KOSTL (코스트 센터) — ${me.kostlText}` : "KOSTL (코스트 센터)";
         const gsberLabel = defaults.gsber
           ? "GSBER (사업영역)"
-          : "GSBER (사업영역 — 직방=K200 / 호갱노노=K300)";
+          : "GSBER (사업영역 — EAC > EA전표작성 > 사업영역 드롭다운에서 확인)";
         ids = {
           pernr: await ask(pernrLabel,                       defaults.pernr),
           bukrs: await ask("BUKRS (회사 코드)",                defaults.bukrs),
@@ -180,9 +180,8 @@ const initCommand = defineCommand({
       if (!ids.gsber) {
         throw new Error(
           `GSBER (Business Area) 가 비어있다. 사내 회계 기준에 따라 본인 부서의 사업영역 코드를 입력해야 한다.\n` +
-          `  EAC UI 의 전표 작성 화면에서 '사업영역' 드롭다운으로 확인 가능.\n` +
-          `  통상: 직방=K200 / 호갱노노=K300.\n` +
-          `  비대화 환경에선 CLI flag 로: 'eac config init --force --gsber K300'.`,
+          `  EAC UI > 비용정산 > EA전표작성 > 헤더의 '사업영역' 드롭다운에서 본인 default 값 확인.\n` +
+          `  비대화 환경에선 CLI flag 로: 'eac config init --force --gsber <CODE>'.`,
         );
       }
 
