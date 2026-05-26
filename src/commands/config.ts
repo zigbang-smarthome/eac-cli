@@ -161,27 +161,28 @@ const initCommand = defineCommand({
         gsber: args.gsber || me.gsber || existing?.user.gsber || "",
       };
 
-      // Only prompt for fields where view.do leaves a gap. PERNR/BUKRS/KOSTL/BUPLA
-      // are reliably populated by staticProperties.user — confirming them every
-      // run is just noise. GSBER is the one server-side empty case in practice
-      // (cost-center master doesn't push it back in the SPA bootstrap).
       let ids = defaults;
       if (interactive) {
-        const needGsber = !defaults.gsber;
-        if (needGsber) {
-          console.error("\nGSBER (사업영역) 만 직접 입력 필요. 나머지는 자동 탐지값 그대로 사용.");
-          ids = {
-            ...defaults,
-            gsber: await ask("GSBER — 직방=K200 / 호갱노노=K300", ""),
-          };
-        }
+        console.error("\n식별자 확인. Enter = 그대로 사용. 일반적으로 수정할 일 없음.");
+        const pernrLabel = me.ename ? `PERNR (사번) — ${me.ename}` : "PERNR (사번)";
+        const kostlLabel = me.kostlText ? `KOSTL (코스트 센터) — ${me.kostlText}` : "KOSTL (코스트 센터)";
+        const gsberLabel = defaults.gsber
+          ? "GSBER (사업영역)"
+          : "GSBER (사업영역 — 직방=K200 / 호갱노노=K300)";
+        ids = {
+          pernr: await ask(pernrLabel,                       defaults.pernr),
+          bukrs: await ask("BUKRS (회사 코드)",                defaults.bukrs),
+          kostl: await ask(kostlLabel,                       defaults.kostl),
+          bupla: await ask("BUPLA (사업장 코드)",              defaults.bupla),
+          gsber: await ask(gsberLabel,                       defaults.gsber),
+        };
       }
       if (!ids.gsber) {
         throw new Error(
           `GSBER (Business Area) 가 비어있다. 사내 회계 기준에 따라 본인 부서의 사업영역 코드를 입력해야 한다.\n` +
           `  EAC UI 의 전표 작성 화면에서 '사업영역' 드롭다운으로 확인 가능.\n` +
           `  통상: 직방=K200 / 호갱노노=K300.\n` +
-          `  CLI flag 로 한방에: 'eac config init --force --gsber K300'.`,
+          `  비대화 환경에선 CLI flag 로: 'eac config init --force --gsber K300'.`,
         );
       }
 
