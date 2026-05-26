@@ -44,6 +44,8 @@ export function toDiskShape(cfg: EacConfig) {
       pernr: cfg.user.pernr,
       bukrs: cfg.user.bukrs,
       kostl: cfg.user.kostl,
+      bupla: cfg.user.bupla,
+      gsber: cfg.user.gsber,
     },
     items: Object.fromEntries(
       Object.entries(cfg.items).map(([k, v]) => [
@@ -73,6 +75,8 @@ export const EMPTY_CONFIG: EacConfig = {
     pernr: "",
     bukrs: "",
     kostl: "",
+    bupla: "",
+    gsber: "",
     // *_TXT labels are filled live by loadCtx() from view.do — never stored.
     pernrName: "",
     wfIdText: "",

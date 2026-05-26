@@ -30,6 +30,9 @@ export interface RemoteUser {
   sname: string;        // "정세준" — Korean short name
   kostl: string;        // "343020"
   kostlText: string;    // "Frontend Hogangnono"
+  bupla: string;        // "K100" (Zigbang HQ); usually populated
+  gsber: string;        // "K200" / "K300"; often "" — server doesn't reliably push it,
+                        //                  caller must fall back to prompt.
   email: string;        // SMTP_ADDR
   jobName: string;      // "Member" / "Manager" — title
   posName: string;      // "Frontend Engineer (Hogangnono)"
@@ -91,6 +94,8 @@ export async function fetchViewBootstrap(jsessionid: string): Promise<ViewBootst
       sname: pick("SNAME") || pick("LIFNR_TXT"),
       kostl: pick("KOSTL"),
       kostlText: pick("KOSTL_TXT"),
+      bupla: pick("BUPLA"),
+      gsber: pick("GSBER"),
       email: pick("SMTP_ADDR"),
       jobName: pick("JOB_NAME"),
       posName: pick("POS_NAME"),

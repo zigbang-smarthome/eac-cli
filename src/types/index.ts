@@ -19,6 +19,10 @@ export interface UserProfile {
   pernr: string;         // Employee number, e.g. "ZB01135"
   bukrs: string;         // Company code, e.g. "K001"
   kostl: string;         // Cost center, e.g. "226020"
+  bupla: string;         // Business place, e.g. "K100" (Zigbang HQ)
+  gsber: string;         // Business area, e.g. "K200" (Zigbang) / "K300" (Hogangnono)
+                         //   SAP rule ZFI1.213: all FI doc lines must share GSBER.
+                         //   Hardcoding the wrong value gets the voucher rejected.
   pernrName: string;     // Display name, e.g. "박영걸"     (live)
   wfIdText: string;      // "YG Park (박영걸)"               (live)
   kostlText: string;     // "Device Engineering"             (live)

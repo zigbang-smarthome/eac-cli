@@ -55,6 +55,7 @@ const initCommand = defineCommand({
     force: { type: "boolean", description: "overwrite existing config (existing items.* presets are merged)" },
     print: { type: "boolean", description: "print resulting config to stdout instead of writing" },
     yes: { type: "boolean", description: "non-interactive — accept all auto-detected values without prompting" },
+    gsber: { type: "string", description: "GSBER (Business Area) override — needed when view.do doesn't push it (e.g. 호갱노노=K300)" },
   },
   async run({ args }) {
     const existing = await loadConfig();
@@ -90,6 +91,8 @@ const initCommand = defineCommand({
       console.error(`     PERNR      ${me.pernr}  (${me.ename})`);
       console.error(`     BUKRS      ${me.bukrs}`);
       console.error(`     KOSTL      ${me.kostl}  (${me.kostlText})`);
+      console.error(`     BUPLA      ${me.bupla || "(empty — 입력 필요)"}`);
+      console.error(`     GSBER      ${me.gsber || "(empty — 입력 필요)"}  ← SAP Business Area`);
       console.error(`     EMAIL      ${me.email}`);
       console.error(`     POS        ${me.jobName} / ${me.posName}`);
       console.error(`     requireBust=${boot.requireBust}`);
@@ -146,18 +149,40 @@ const initCommand = defineCommand({
       //    are filled live by loadCtx() from the same view.do payload every
       //    command run — keeping them out of config means no stale labels
       //    after a department/role change.
-      const defaults = { pernr: me.pernr, bukrs: me.bukrs, kostl: me.kostl };
+      //
+      //    BUPLA/GSBER are stored identifiers but the server often leaves
+      //    GSBER empty in staticProperties.user — prompt to fill in.
+      // Precedence: CLI flag > view.do > existing config > empty
+      const defaults = {
+        pernr: me.pernr,
+        bukrs: me.bukrs,
+        kostl: me.kostl,
+        bupla: me.bupla || existing?.user.bupla || "",
+        gsber: args.gsber || me.gsber || existing?.user.gsber || "",
+      };
 
+      // Only prompt for fields where view.do leaves a gap. PERNR/BUKRS/KOSTL/BUPLA
+      // are reliably populated by staticProperties.user — confirming them every
+      // run is just noise. GSBER is the one server-side empty case in practice
+      // (cost-center master doesn't push it back in the SPA bootstrap).
       let ids = defaults;
       if (interactive) {
-        console.error("\n식별자 확인. Enter = 그대로 사용. 일반적으로 수정할 일 없음.");
-        const pernrLabel = me.ename ? `PERNR (사번) — ${me.ename}` : "PERNR (사번)";
-        const kostlLabel = me.kostlText ? `KOSTL (코스트 센터) — ${me.kostlText}` : "KOSTL (코스트 센터)";
-        ids = {
-          pernr: await ask(pernrLabel,             defaults.pernr),
-          bukrs: await ask("BUKRS (회사 코드)",      defaults.bukrs),
-          kostl: await ask(kostlLabel,             defaults.kostl),
-        };
+        const needGsber = !defaults.gsber;
+        if (needGsber) {
+          console.error("\nGSBER (사업영역) 만 직접 입력 필요. 나머지는 자동 탐지값 그대로 사용.");
+          ids = {
+            ...defaults,
+            gsber: await ask("GSBER — 직방=K200 / 호갱노노=K300", ""),
+          };
+        }
+      }
+      if (!ids.gsber) {
+        throw new Error(
+          `GSBER (Business Area) 가 비어있다. 사내 회계 기준에 따라 본인 부서의 사업영역 코드를 입력해야 한다.\n` +
+          `  EAC UI 의 전표 작성 화면에서 '사업영역' 드롭다운으로 확인 가능.\n` +
+          `  통상: 직방=K200 / 호갱노노=K300.\n` +
+          `  CLI flag 로 한방에: 'eac config init --force --gsber K300'.`,
+        );
       }
 
       // 5) Items: re-init merge only when PERNR matches (wfLineSeq is per-user)
@@ -170,6 +195,8 @@ const initCommand = defineCommand({
           pernr: ids.pernr,
           bukrs: ids.bukrs,
           kostl: ids.kostl,
+          bupla: ids.bupla,
+          gsber: ids.gsber,
           // Labels intentionally empty on disk — loadCtx() refreshes them.
           pernrName: "",
           wfIdText: "",

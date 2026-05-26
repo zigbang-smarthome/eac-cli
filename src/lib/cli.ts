@@ -17,6 +17,13 @@ export async function loadCtx(): Promise<{ ctx: ClientContext; cfg: EacConfig }>
   if (!stored.user.pernr || !stored.user.bukrs) {
     throw new Error(`config at ${configPath()} is missing user.pernr / user.bukrs — re-run 'eac config init' or edit by hand.`);
   }
+  if (!stored.user.gsber || !stored.user.bupla) {
+    throw new Error(
+      `config at ${configPath()} is missing user.gsber / user.bupla.\n` +
+      `  SAP rule ZFI1.213 requires every FI doc line to share the same Business Area —\n` +
+      `  without these the server rejects voucher creation. Re-run 'eac config init --force'.`,
+    );
+  }
 
   const jsessionid = await ensureSession();
   // Single round-trip to view.do delivers (a) the rotating cache-bust the
